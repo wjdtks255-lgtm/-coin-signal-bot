@@ -62,7 +62,7 @@ def get_upbit_market_details():
     return market_dict
 
 if __name__ == "__main__":
-    print("🎯 스마트 멀티 트래킹 봇 가동 중...")
+    print("🎯 유연화된 스마트 멀티 트래킹 봇 가동 중...")
     
     market_status = get_market_status()
     market_dict = get_upbit_market_details()
@@ -98,7 +98,7 @@ if __name__ == "__main__":
             current_volume = volumes[-1]
             vol_ratio = current_volume / avg_volume_20 if avg_volume_20 > 0 else 0
             
-            # --- [CASE 1: 이미 감지해서 추적 중인 종목] ---
+            # --- [CASE 1: 이미 감지해서 추적 중인 종목 모니터링] ---
             if market in tracked_cache:
                 info = tracked_cache[market]
                 tp1 = info['tp1']
@@ -113,17 +113,17 @@ if __name__ == "__main__":
                     del tracked_cache[market]
                     continue
                 
-                # 2. 추세 종료 체크 (5일선이 20일선 아래로 이탈)
+                # 2. 추세 종료 체크
                 if ma5 < ma20:
                     notifications.append(f"⚠️ **[추세 종료 알림]** `{korean_name} ({market})`\n- 단기 이평선이 하향 이탈하며 상승 추세가 종료되었습니다.")
                     del tracked_cache[market]
                     continue
                 
-                # 3. 목표가 단계별 도달 체크 (1차, 2차, 3차 각각 도달할 때마다 알림)
+                # 3. 목표가 단계별 도달 체크
                 if 3 not in reached and current_price >= tp3:
                     notifications.append(f"🎯🔥 **[3차 목표가 최종 달성!]** `{korean_name} ({market})`\n- 현재가 `{current_price:,.0f}원`! 최종 3차 목표가를 돌파했습니다. 전량 익절을 축하드립니다!")
                     info['reached_targets'] = [1, 2, 3]
-                    del tracked_cache[market] # 완료되었으므로 추적 해제
+                    del tracked_cache[market]
                     continue
                 elif 2 not in reached and current_price >= tp2:
                     notifications.append(f"🎯🚀 **[2차 목표가 달성!]** `{korean_name} ({market})`\n- 현재가 `{current_price:,.0f}원`이 2차 목표가에 도달했습니다! 절반 이상 분할 익절을 챙기세요.")
@@ -134,9 +134,9 @@ if __name__ == "__main__":
                 
                 info['reached_targets'] = reached
 
-                # 4. 기존 종목인데, 수급이나 거래량이 이전보다 훨씬 더 폭증하며 강한 상승세가 추가로 붙을 때
+                # 4. 수급 추가 폭증 시 탄력 알림
                 last_vol_ratio = info.get('last_vol_ratio', 0)
-                if vol_ratio >= last_vol_ratio * 1.3 and vol_ratio >= 4.0 and (current_time - info.get('last_alert_time', 0) > 7200):
+                if vol_ratio >= last_vol_ratio * 1.2 and vol_ratio >= 2.5 and (current_time - info.get('last_alert_time', 0) > 7200):
                     info['last_alert_time'] = current_time
                     info['last_vol_ratio'] = vol_ratio
                     notifications.append(
@@ -148,21 +148,20 @@ if __name__ == "__main__":
                 tracked_cache[market] = info
                 continue
 
-            # --- [CASE 2: 새로운 급등 종목 발굴 (고승률 필터)] ---
-            is_volume_spike = vol_ratio >= 3.0
-            is_bullish = ma5 > ma20
+            # --- [CASE 2: 새로운 급등 종목 발굴 (조건 완화)] ---
+            is_volume_spike = vol_ratio >= 1.8   # 기존 3.0 -> 1.8배로 완화
+            is_bullish = ma5 >= ma20             # 정배열 조건 완화
             
-            std20 = np.std(closes[-20:])
-            upper_band = ma20 + (std20 * 2.0)
-            is_band_breakout = current_price >= upper_band
-            
-            if is_volume_spike and is_bullish and is_band_breakout and (2.0 <= change_rate <= 15.0):
+            # 조건 완화: 거래량 폭증이 동반되면서 양봉(상승세)인 종목 포착
+            if is_volume_spike and is_bullish and (0.5 <= change_rate <= 20.0):
                 recent_atr = np.mean(highs[-5:] - lows[-5:])
+                if recent_atr == 0:
+                    recent_atr = current_price * 0.01
                 
-                tp1 = current_price + (recent_atr * 1.2)
-                tp2 = current_price + (recent_atr * 2.5)
-                tp3 = current_price + (recent_atr * 4.0)
-                sl = min(np.min(lows[-5:]), ma20 * 0.98)
+                tp1 = current_price + (recent_atr * 1.0)
+                tp2 = current_price + (recent_atr * 2.0)
+                tp3 = current_price + (recent_atr * 3.5)
+                sl = min(np.min(lows[-5:]), ma20 * 0.97)
                 
                 tp1_pct = ((tp1 - current_price) / current_price) * 100
                 tp2_pct = ((tp2 - current_price) / current_price) * 100
@@ -170,12 +169,11 @@ if __name__ == "__main__":
                 sl_pct = ((sl - current_price) / current_price) * 100
 
                 reasons = [
-                    f"• 평소 거래량 대비 `{vol_ratio:.1f}배` 폭증",
-                    "• 단기 이동평균선(5선/20선) 정배열 추세",
-                    "• 볼린저 밴드 상단 돌파 및 변동성 확장"
+                    f"• 평소 거래량 대비 `{vol_ratio:.1f}배` 유입",
+                    "• 단기 이동평균선 상향 유지 및 수급 포착",
+                    "• 변동성 확장 구간 진입"
                 ]
                 
-                # 새로 발견된 종목 캐시 등록
                 tracked_cache[market] = {
                     "time": current_time,
                     "last_alert_time": current_time,
@@ -187,7 +185,7 @@ if __name__ == "__main__":
                     "reached_targets": []
                 }
                 
-                prefix = "⚠️ **[주의] 비트 하락장 속 개별 펌핑 포착!**\n\n" if market_status == "BEARISH" else "🔥 **[고승률 3차 목표가 신규 시그널]** 🔥\n\n"
+                prefix = "⚠️ **[주의] 비트 하락장 속 수급 포착!**\n\n" if market_status == "BEARISH" else "🔥 **[고승률 3차 목표가 신규 시그널]** 🔥\n\n"
                 
                 new_msg = (
                     f"{prefix}"
@@ -204,7 +202,6 @@ if __name__ == "__main__":
         except Exception as e:
             pass
 
-    # 누적된 알림 전송
     for msg in notifications:
         send_telegram(msg)
 
