@@ -1,7 +1,6 @@
 import os
 import requests
 
-# 깃허브 Secrets에서 토큰과 챗 아이디를 불러옵니다
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
@@ -24,7 +23,8 @@ def check_upbit():
             coin = item['market']
             price = item['trade_price']
             change = item['signed_change_rate'] * 100
-            msg += f"- {coin}: {price:,.0f원} ({change:+.2f}%)\n"
+            # 포맷팅 방식 수정 (Invalid format specifier 에러 방지)
+            msg += f"- {coin}: {price:,.0f}원 ({change:+.2f}%)\n"
         
         send_telegram(msg)
     except Exception as e:
