@@ -1,9 +1,12 @@
 import os
 import requests
 import numpy as np
+import json
+import time
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+CACHE_FILE = "tracked_coins.json"
 
 def send_telegram(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -15,8 +18,24 @@ def send_telegram(text):
     res = requests.post(url, json=payload)
     print(f"텔레그램 전송 응답: {res.text}")
 
+def load_cache():
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+def save_cache(cache):
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(cache, f)
+    except Exception as e:
+        print(f"캐시 저장 에러: {e}")
+
 def get_market_status():
-    """ 비트코인(KRW-BTC)의 최근 추세를 파악하여 시장 분위기 판단 """
+    """ 비트코인(KRW-BTC) 최근 추세 파악 """
     try:
         url = "https://api.upbit.com/v1/candles/minutes/60?market=KRW-BTC&count=10"
         res = requests.get(url).json()
@@ -42,86 +61,152 @@ def get_upbit_market_details():
             market_dict[item['market']] = item['korean_name']
     return market_dict
 
-def analyze_coin(market, korean_name):
-    try:
-        url = f"https://api.upbit.com/v1/candles/minutes/60?market={market}&count=30"
-        res = requests.get(url).json()
-        
-        if len(res) < 25:
-            return None
-            
-        res = list(reversed(res))
-        
-        closes = np.array([x['trade_price'] for x in res])
-        highs = np.array([x['high_price'] for x in res])
-        lows = np.array([x['low_price'] for x in res])
-        
-        current_price = closes[-1]
-        prev_close = closes[-2]
-        change_rate = ((current_price - prev_close) / prev_close) * 100
-        
-        # 🚨 [테스트용 조건] 까다로운 필터를 모두 빼고, 0.5% 이상 상승 중이면 무조건 포착!
-        if change_rate >= 0.5:
-            
-            # 변동성(ATR) 기반 동적 목표가 및 손절가 계산
-            recent_atr = np.mean(highs[-5:] - lows[-5:])
-            ma20 = np.mean(closes[-20:])
-            
-            tp1 = current_price + (recent_atr * 1.2)
-            tp2 = current_price + (recent_atr * 2.5)
-            tp3 = current_price + (recent_atr * 4.0)
-            sl = min(np.min(lows[-5:]), ma20 * 0.98)
-            
-            tp1_pct = ((tp1 - current_price) / current_price) * 100
-            tp2_pct = ((tp2 - current_price) / current_price) * 100
-            tp3_pct = ((tp3 - current_price) / current_price) * 100
-            sl_pct = ((sl - current_price) / current_price) * 100
-
-            reasons = []
-            reasons.append(f"• [테스트 모드] 현재 상승률 `+{change_rate:.2f}%` 감지")
-            reasons.append("• 테스트를 위해 필터 조건을 일시적으로 해제한 상태입니다.")
-            
-            return {
-                "market": market,
-                "korean_name": korean_name,
-                "price": current_price,
-                "change": change_rate,
-                "tp1": tp1, "tp1_pct": tp1_pct,
-                "tp2": tp2, "tp2_pct": tp2_pct,
-                "tp3": tp3, "tp3_pct": tp3_pct,
-                "sl": sl, "sl_pct": sl_pct,
-                "reasons": "\n".join(reasons)
-            }
-            
-    except Exception as e:
-        pass
-    return None
-
 if __name__ == "__main__":
-    print("🧪 테스트용 시그널 스캔 시스템 가동...")
+    print("🎯 스마트 멀티 트래킹 봇 가동 중...")
     
     market_status = get_market_status()
     market_dict = get_upbit_market_details()
+    tracked_cache = load_cache()
+    current_time = time.time()
     
-    signals = []
+    # 24시간 지난 캐시는 자동 정리
+    tracked_cache = {k: v for k, v in tracked_cache.items() if current_time - v.get('time', 0) < 86400}
+    
+    notifications = []
+
     for market, korean_name in market_dict.items():
-        result = analyze_coin(market, korean_name)
-        if result:
-            signals.append(result)
+        try:
+            url = f"https://api.upbit.com/v1/candles/minutes/60?market={market}&count=30"
+            res = requests.get(url).json()
+            if len(res) < 25:
+                continue
+                
+            res = list(reversed(res))
+            closes = np.array([x['trade_price'] for x in res])
+            highs = np.array([x['high_price'] for x in res])
+            lows = np.array([x['low_price'] for x in res])
+            volumes = np.array([x['candle_acc_trade_volume'] for x in res])
             
-    if signals:
-        # 너무 많은 알림이 한꺼번에 오면 텔레그램에서 차단할 수 있으므로 상위 3개만 테스트 전송
-        for s in signals[:3]:
-            msg = (
-                f"🧪 **[테스트 알림 발송]** 🧪\n\n"
-                f"📌 **종목명**: `{s['korean_name']}` (`{s['market']}`)\n"
-                f"💰 **현재가**: `{s['price']:,.0f}원` (`+{s['change']:.2f}%`)\n\n"
-                f"🎯 **1차 목표가**: `{s['tp1']:,.0f}원` (`+{s['tp1_pct']:.1f}%`)\n"
-                f"🎯 **2차 목표가**: `{s['tp2']:,.0f}원` (`+{s['tp2_pct']:.1f}%`)\n"
-                f"🎯 **3차 목표가**: `{s['tp3']:,.0f}원` (`+{s['tp3_pct']:.1f}%`)\n"
-                f"🛑 **손절가**: `{s['sl']:,.0f}원` (`{s['sl_pct']:.1f}%`)\n\n"
-                f"📊 **테스트 근거**:\n{s['reasons']}"
-            )
-            send_telegram(msg)
-    else:
-        print("현재 0.5% 이상 상승 중인 코인이 없습니다.")
+            current_price = closes[-1]
+            prev_close = closes[-2]
+            change_rate = ((current_price - prev_close) / prev_close) * 100
+            
+            ma5 = np.mean(closes[-5:])
+            ma20 = np.mean(closes[-20:])
+            
+            avg_volume_20 = np.mean(volumes[-21:-1])
+            current_volume = volumes[-1]
+            vol_ratio = current_volume / avg_volume_20 if avg_volume_20 > 0 else 0
+            
+            # --- [CASE 1: 이미 감지해서 추적 중인 종목] ---
+            if market in tracked_cache:
+                info = tracked_cache[market]
+                tp1 = info['tp1']
+                tp2 = info['tp2']
+                tp3 = info['tp3']
+                sl = info['sl']
+                reached = info.get('reached_targets', [])
+                
+                # 1. 손절가 도달 체크
+                if current_price <= sl:
+                    notifications.append(f"🛑 **[손절가 도달]** `{korean_name} ({market})`\n- 현재가 `{current_price:,.0f}원`이 설정된 손절가 아래로 이탈했습니다. 리스크 관리를 진행하세요.")
+                    del tracked_cache[market]
+                    continue
+                
+                # 2. 추세 종료 체크 (5일선이 20일선 아래로 이탈)
+                if ma5 < ma20:
+                    notifications.append(f"⚠️ **[추세 종료 알림]** `{korean_name} ({market})`\n- 단기 이평선이 하향 이탈하며 상승 추세가 종료되었습니다.")
+                    del tracked_cache[market]
+                    continue
+                
+                # 3. 목표가 단계별 도달 체크 (1차, 2차, 3차 각각 도달할 때마다 알림)
+                if 3 not in reached and current_price >= tp3:
+                    notifications.append(f"🎯🔥 **[3차 목표가 최종 달성!]** `{korean_name} ({market})`\n- 현재가 `{current_price:,.0f}원`! 최종 3차 목표가를 돌파했습니다. 전량 익절을 축하드립니다!")
+                    info['reached_targets'] = [1, 2, 3]
+                    del tracked_cache[market] # 완료되었으므로 추적 해제
+                    continue
+                elif 2 not in reached and current_price >= tp2:
+                    notifications.append(f"🎯🚀 **[2차 목표가 달성!]** `{korean_name} ({market})`\n- 현재가 `{current_price:,.0f}원`이 2차 목표가에 도달했습니다! 절반 이상 분할 익절을 챙기세요.")
+                    reached.append(2)
+                elif 1 not in reached and current_price >= tp1:
+                    notifications.append(f"🎯✨ **[1차 목표가 달성!]** `{korean_name} ({market})`\n- 현재가 `{current_price:,.0f}원`이 1차 목표가에 도달했습니다! 가볍게 익절을 시작하세요.")
+                    reached.append(1)
+                
+                info['reached_targets'] = reached
+
+                # 4. 기존 종목인데, 수급이나 거래량이 이전보다 훨씬 더 폭증하며 강한 상승세가 추가로 붙을 때
+                last_vol_ratio = info.get('last_vol_ratio', 0)
+                if vol_ratio >= last_vol_ratio * 1.3 and vol_ratio >= 4.0 and (current_time - info.get('last_alert_time', 0) > 7200):
+                    info['last_alert_time'] = current_time
+                    info['last_vol_ratio'] = vol_ratio
+                    notifications.append(
+                        f"⚡ **[수급 급증 / 추가 탄력 포착]** `{korean_name} ({market})`\n"
+                        f"- 현재가 `{current_price:,.0f}원` (`+{change_rate:.2f}%`)\n"
+                        f"- 거래량이 평소 대비 **{vol_ratio:.1f}배**로 더 강력하게 폭증하며 추가 상승세가 붙고 있습니다!"
+                    )
+                
+                tracked_cache[market] = info
+                continue
+
+            # --- [CASE 2: 새로운 급등 종목 발굴 (고승률 필터)] ---
+            is_volume_spike = vol_ratio >= 3.0
+            is_bullish = ma5 > ma20
+            
+            std20 = np.std(closes[-20:])
+            upper_band = ma20 + (std20 * 2.0)
+            is_band_breakout = current_price >= upper_band
+            
+            if is_volume_spike and is_bullish and is_band_breakout and (2.0 <= change_rate <= 15.0):
+                recent_atr = np.mean(highs[-5:] - lows[-5:])
+                
+                tp1 = current_price + (recent_atr * 1.2)
+                tp2 = current_price + (recent_atr * 2.5)
+                tp3 = current_price + (recent_atr * 4.0)
+                sl = min(np.min(lows[-5:]), ma20 * 0.98)
+                
+                tp1_pct = ((tp1 - current_price) / current_price) * 100
+                tp2_pct = ((tp2 - current_price) / current_price) * 100
+                tp3_pct = ((tp3 - current_price) / current_price) * 100
+                sl_pct = ((sl - current_price) / current_price) * 100
+
+                reasons = [
+                    f"• 평소 거래량 대비 `{vol_ratio:.1f}배` 폭증",
+                    "• 단기 이동평균선(5선/20선) 정배열 추세",
+                    "• 볼린저 밴드 상단 돌파 및 변동성 확장"
+                ]
+                
+                # 새로 발견된 종목 캐시 등록
+                tracked_cache[market] = {
+                    "time": current_time,
+                    "last_alert_time": current_time,
+                    "tp1": tp1,
+                    "tp2": tp2,
+                    "tp3": tp3,
+                    "sl": sl,
+                    "last_vol_ratio": vol_ratio,
+                    "reached_targets": []
+                }
+                
+                prefix = "⚠️ **[주의] 비트 하락장 속 개별 펌핑 포착!**\n\n" if market_status == "BEARISH" else "🔥 **[고승률 3차 목표가 신규 시그널]** 🔥\n\n"
+                
+                new_msg = (
+                    f"{prefix}"
+                    f"📌 **종목명**: `{korean_name}` (`{market}`)\n"
+                    f"💰 **현재가**: `{current_price:,.0f}원` (`+{change_rate:.2f}%`)\n\n"
+                    f"🎯 **1차 목표가**: `{tp1:,.0f}원` (`+{tp1_pct:.1f}%`)\n"
+                    f"🎯 **2차 목표가**: `{tp2:,.0f}원` (`+{tp2_pct:.1f}%`)\n"
+                    f"🎯 **3차 목표가**: `{tp3:,.0f}원` (`+{tp3_pct:.1f}%`)\n"
+                    f"🛑 **손절가**: `{sl:,.0f}원` (`{sl_pct:.1f}%`)\n\n"
+                    f"📊 **급등 근거**:\n" + "\n".join(reasons)
+                )
+                notifications.append(new_msg)
+
+        except Exception as e:
+            pass
+
+    # 누적된 알림 전송
+    for msg in notifications:
+        send_telegram(msg)
+
+    save_cache(tracked_cache)
+    print("스캔 및 모니터링 완료.")
