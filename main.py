@@ -77,8 +77,9 @@ def analyze_coin(market, korean_name):
         upper_band = ma20 + (std20 * 2.0)
         is_band_breakout = current_price >= upper_band
         
-        # 조건 만족 시 (고승률 필터)
-        if is_volume_spike and is_bullish and is_band_breakout and (2.0 <= change_rate <= 15.0):
+        # 테스트용으로 조건 대폭 완화 (상승 중인 코인 아무거나 잡히게)
+        if change_rate >= 0.5:
+
             
             # --- [동적 목표가 및 손절가 계산 로직] ---
             # 최근 변동성(ATR 유사 개념) 및 고가 매물대 활용
