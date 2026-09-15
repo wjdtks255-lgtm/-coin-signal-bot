@@ -18,6 +18,15 @@ def send_telegram(text):
     res = requests.post(url, json=payload)
     print(f"텔레그램 전송 응답: {res.text}")
 
+def format_price(price):
+    """ 저가 코인은 소수점까지 표시하고, 가격이 높으면 정수로 표시 """
+    if price < 10:
+        return f"{price:.2f}원"
+    elif price < 1000:
+        return f"{price:.1f}원"
+    else:
+        return f"{price:,.0f}원"
+
 def load_cache():
     if os.path.exists(CACHE_FILE):
         try:
@@ -44,7 +53,7 @@ def get_upbit_market_details():
     return market_dict
 
 if __name__ == "__main__":
-    print("🌐 [올라운드 15분봉 + 합리적 목표가 보장] 스캐너 가동 중...")
+    print("🌐 [올라운드 15분봉 + 저가 코인 소수점 가격 보정] 스캐너 가동 중...")
     
     market_dict = get_upbit_market_details()
     tracked_cache = load_cache()
@@ -90,7 +99,7 @@ if __name__ == "__main__":
                 reached = info.get('reached_targets', [])
                 
                 if current_price <= sl:
-                    notifications.append(f"🛑 **[손절가 이탈]** `{korean_name} ({market})`\n- 현재가 `{current_price:,.0f}원`이 손절가를 이탈했습니다.")
+                    notifications.append(f"🛑 **[손절가 이탈]** `{korean_name} ({market})`\n- 현재가 `{format_price(current_price)}`이 손절가를 이탈했습니다.")
                     del tracked_cache[market]
                     continue
                 
@@ -117,12 +126,10 @@ if __name__ == "__main__":
             is_strong_change = (3.0 <= change_rate <= 25.0)
             
             if is_strong_vol and is_strong_change:
-                # ATR 기반 기본 목표가 설정 (차트 변동성에 맞춤)
                 tp1 = current_price + (recent_atr * 1.2)
                 tp2 = current_price + (recent_atr * 2.4)
                 tp3 = current_price + (recent_atr * 4.0)
                 
-                # 최소 3%는 보장하되, 차트 범위 안에서 실현 가능하도록 캡(Max) 설정
                 tp1 = max(tp1, current_price * 1.03)
                 tp2 = max(tp2, tp1 * 1.025)
                 tp3 = max(tp3, tp2 * 1.025)
@@ -134,11 +141,11 @@ if __name__ == "__main__":
                 new_msg = (
                     f"🔥 **[급등 / 바닥 슈팅 포착]** 🔥\n\n"
                     f"📌 **종목명**: `{korean_name}` (`{market}`)\n"
-                    f"💰 **현재가**: `{current_price:,.0f}원` (`+{change_rate:.2f}%`)\n\n"
-                    f"🎯 **1차 목표**: `{tp1:,.0f}원` (`+{((tp1-current_price)/current_price)*100:.1f}%`)\n"
-                    f"🎯 **2차 목표**: `{tp2:,.0f}원` (`+{((tp2-current_price)/current_price)*100:.1f}%`)\n"
-                    f"🎯 **3차 목표**: `{tp3:,.0f}원` (`+{((tp3-current_price)/current_price)*100:.1f}%`)\n"
-                    f"🛑 **손절가**: `{sl:,.0f}원` (`{((sl-current_price)/current_price)*100:.1f}%`)\n\n"
+                    f"💰 **현재가**: `{format_price(current_price)}` (`+{change_rate:.2f}%`)\n\n"
+                    f"🎯 **1차 목표**: `{format_price(tp1)}` (`+{((tp1-current_price)/current_price)*100:.1f}%`)\n"
+                    f"🎯 **2차 목표**: `{format_price(tp2)}` (`+{((tp2-current_price)/current_price)*100:.1f}%`)\n"
+                    f"🎯 **3차 목표**: `{format_price(tp3)}` (`+{((tp3-current_price)/current_price)*100:.1f}%`)\n"
+                    f"🛑 **손절가**: `{format_price(sl)}` (`{((sl-current_price)/current_price)*100:.1f}%`)\n\n"
                     f"📊 **포착 근거**: 평소 대비 거래량 `{vol_ratio:.1f}배` 폭발 및 강력한 수급 유입"
                 )
                 notifications.append(new_msg)
@@ -149,12 +156,10 @@ if __name__ == "__main__":
             is_mild_change = (0.5 <= change_rate < 3.0)
             
             if is_mild_vol and is_mild_change:
-                # ATR 기반 기본 목표가 설정
                 tp1 = current_price + (recent_atr * 1.0)
                 tp2 = current_price + (recent_atr * 2.0)
                 tp3 = current_price + (recent_atr * 3.2)
                 
-                # 최소 3% 보장 및 합리적인 범위 적용
                 tp1 = max(tp1, current_price * 1.03)
                 tp2 = max(tp2, tp1 * 1.02)
                 tp3 = max(tp3, tp2 * 1.02)
@@ -166,11 +171,11 @@ if __name__ == "__main__":
                 new_msg = (
                     f"⚡ **[약상승 / 수급 초입 포착]** ⚡\n\n"
                     f"📌 **종목명**: `{korean_name}` (`{market}`)\n"
-                    f"💰 **현재가**: `{current_price:,.0f}원` (`+{change_rate:.2f}%`)\n\n"
-                    f"🎯 **1차 목표**: `{tp1:,.0f}원` (`+{((tp1-current_price)/current_price)*100:.1f}%`)\n"
-                    f"🎯 **2차 목표**: `{tp2:,.0f}원` (`+{((tp2-current_price)/current_price)*100:.1f}%`)\n"
-                    f"🎯 **3차 목표**: `{tp3:,.0f}원` (`+{((tp3-current_price)/current_price)*100:.1f}%`)\n"
-                    f"🛑 **손절가**: `{sl:,.0f}원` (`{((sl-current_price)/current_price)*100:.1f}%`)\n\n"
+                    f"💰 **현재가**: `{format_price(current_price)}` (`+{change_rate:.2f}%`)\n\n"
+                    f"🎯 **1차 목표**: `{format_price(tp1)}` (`+{((tp1-current_price)/current_price)*100:.1f}%`)\n"
+                    f"🎯 **2차 목표**: `{format_price(tp2)}` (`+{((tp2-current_price)/current_price)*100:.1f}%`)\n"
+                    f"🎯 **3차 목표**: `{format_price(tp3)}` (`+{((tp3-current_price)/current_price)*100:.1f}%`)\n"
+                    f"🛑 **손절가**: `{format_price(sl)}` (`{((sl-current_price)/current_price)*100:.1f}%`)\n\n"
                     f"📊 **포착 근거**: 거래량 `{vol_ratio:.1f}배` 유입 + 잔잔한 상승 모멘텀 발생"
                 )
                 notifications.append(new_msg)
@@ -182,4 +187,4 @@ if __name__ == "__main__":
         send_telegram(msg)
 
     save_cache(tracked_cache)
-    print("합리적 목표가 보장 스캔 완료.")
+    print("소수점 가격 보정 스캔 완료.")
