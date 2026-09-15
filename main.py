@@ -53,7 +53,7 @@ def get_upbit_market_details():
     return market_dict
 
 if __name__ == "__main__":
-    print("🌐 [올라운드 15분봉 + 저가 코인 소수점 가격 보정] 스캐너 가동 중...")
+    print("🌐 [올라운드 15분봉 + 예상 소요 기간 안내] 스캐너 가동 중...")
     
     market_dict = get_upbit_market_details()
     tracked_cache = load_cache()
@@ -146,6 +146,7 @@ if __name__ == "__main__":
                     f"🎯 **2차 목표**: `{format_price(tp2)}` (`+{((tp2-current_price)/current_price)*100:.1f}%`)\n"
                     f"🎯 **3차 목표**: `{format_price(tp3)}` (`+{((tp3-current_price)/current_price)*100:.1f}%`)\n"
                     f"🛑 **손절가**: `{format_price(sl)}` (`{((sl-current_price)/current_price)*100:.1f}%`)\n\n"
+                    f"⏱ **예상 소요 기간**: `수 시간 ~ 24시간 이내 (초단기 폭발형)`\n"
                     f"📊 **포착 근거**: 평소 대비 거래량 `{vol_ratio:.1f}배` 폭발 및 강력한 수급 유입"
                 )
                 notifications.append(new_msg)
@@ -176,6 +177,7 @@ if __name__ == "__main__":
                     f"🎯 **2차 목표**: `{format_price(tp2)}` (`+{((tp2-current_price)/current_price)*100:.1f}%`)\n"
                     f"🎯 **3차 목표**: `{format_price(tp3)}` (`+{((tp3-current_price)/current_price)*100:.1f}%`)\n"
                     f"🛑 **손절가**: `{format_price(sl)}` (`{((sl-current_price)/current_price)*100:.1f}%`)\n\n"
+                    f"⏱ **예상 소요 기간**: `1일 ~ 3일 이내 (완만형 스윙)`\n"
                     f"📊 **포착 근거**: 거래량 `{vol_ratio:.1f}배` 유입 + 잔잔한 상승 모멘텀 발생"
                 )
                 notifications.append(new_msg)
@@ -187,4 +189,4 @@ if __name__ == "__main__":
         send_telegram(msg)
 
     save_cache(tracked_cache)
-    print("소수점 가격 보정 스캔 완료.")
+    print("예상 소요 기간 추가 스캔 완료.")
