@@ -83,9 +83,9 @@ if __name__ == "__main__":
             
             ma20 = np.mean(closes[-20:])
             std20 = np.std(closes[-20:])
-            upper_band = ma20 + (std20 * 2.0)
             
-            avg_volume_20 = np.mean(volumes[-21:-1])
+            # [수정됨] 직전 20개 봉의 평균 거래량 계산 안정화 (인덱스 에러 방지)
+            avg_volume_20 = np.mean(volumes[-21:-1]) if len(volumes) >= 21 else np.mean(volumes[:-1])
             current_volume = volumes[-1]
             vol_ratio = current_volume / avg_volume_20 if avg_volume_20 > 0 else 0
             
@@ -190,4 +190,3 @@ if __name__ == "__main__":
 
     save_cache(tracked_cache)
     print("예상 소요 기간 추가 스캔 완료.")
-
