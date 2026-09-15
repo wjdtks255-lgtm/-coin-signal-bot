@@ -44,7 +44,7 @@ def get_upbit_market_details():
     return market_dict
 
 if __name__ == "__main__":
-    print("🌐 [올라운드 15분봉 통합 스캐너] 가동 중 (약상승 + 급등 + 바닥슈팅 모두 포착)...")
+    print("🌐 [올라운드 15분봉 + 합리적 목표가 보장] 스캐너 가동 중...")
     
     market_dict = get_upbit_market_details()
     tracked_cache = load_cache()
@@ -112,15 +112,21 @@ if __name__ == "__main__":
             recent_atr = np.mean(highs[-5:] - lows[-5:])
             if recent_atr == 0: recent_atr = current_price * 0.01
 
-            # --- [CASE 2-A: 화끈한 강한 돌파 / 바닥 슈팅 (아스타 패턴 포함)] ---
-            # 조건: 거래량 2.2배 이상 + 상승률 +3% ~ +25% + (볼린저 돌파 또는 역배열 바닥 탈피)
+            # --- [CASE 2-A: 화끈한 강한 돌파 / 바닥 슈팅] ---
             is_strong_vol = vol_ratio >= 2.2
             is_strong_change = (3.0 <= change_rate <= 25.0)
             
             if is_strong_vol and is_strong_change:
-                tp1 = current_price + (recent_atr * 1.5)
-                tp2 = current_price + (recent_atr * 3.0)
-                tp3 = current_price + (recent_atr * 5.0)
+                # ATR 기반 기본 목표가 설정 (차트 변동성에 맞춤)
+                tp1 = current_price + (recent_atr * 1.2)
+                tp2 = current_price + (recent_atr * 2.4)
+                tp3 = current_price + (recent_atr * 4.0)
+                
+                # 최소 3%는 보장하되, 차트 범위 안에서 실현 가능하도록 캡(Max) 설정
+                tp1 = max(tp1, current_price * 1.03)
+                tp2 = max(tp2, tp1 * 1.025)
+                tp3 = max(tp3, tp2 * 1.025)
+                
                 sl = min(np.min(lows[-3:]), ma20 * 0.95)
                 
                 tracked_cache[market] = {"time": current_time, "tp1": tp1, "tp2": tp2, "tp3": tp3, "sl": sl, "reached_targets": []}
@@ -138,15 +144,21 @@ if __name__ == "__main__":
                 notifications.append(new_msg)
                 continue
 
-            # --- [CASE 2-B: 잔잔한 상승세 / 약상승 및 초입 수급] ---
-            # 조건: 거래량 1.6배 이상 + 상승률 +0.5% ~ +3.0% 미만 (하락장 속 약상승도 포함)
+            # --- [CASE 2-B: 잔잔한 상승세 / 수급 초입] ---
             is_mild_vol = vol_ratio >= 1.6
             is_mild_change = (0.5 <= change_rate < 3.0)
             
             if is_mild_vol and is_mild_change:
+                # ATR 기반 기본 목표가 설정
                 tp1 = current_price + (recent_atr * 1.0)
                 tp2 = current_price + (recent_atr * 2.0)
-                tp3 = current_price + (recent_atr * 3.5)
+                tp3 = current_price + (recent_atr * 3.2)
+                
+                # 최소 3% 보장 및 합리적인 범위 적용
+                tp1 = max(tp1, current_price * 1.03)
+                tp2 = max(tp2, tp1 * 1.02)
+                tp3 = max(tp3, tp2 * 1.02)
+                
                 sl = min(np.min(lows[-3:]), ma20 * 0.97)
                 
                 tracked_cache[market] = {"time": current_time, "tp1": tp1, "tp2": tp2, "tp3": tp3, "sl": sl, "reached_targets": []}
@@ -170,4 +182,4 @@ if __name__ == "__main__":
         send_telegram(msg)
 
     save_cache(tracked_cache)
-    print("올라운드 스캔 완료.")
+    print("합리적 목표가 보장 스캔 완료.")
