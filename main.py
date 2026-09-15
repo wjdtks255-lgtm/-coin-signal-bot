@@ -27,6 +27,24 @@ def format_price(price):
     else:
         return f"{price:,.0f}원"
 
+def calculate_dynamic_duration(target_pct, vol_ratio, change_rate):
+    """ 코인별 목표 거리, 거래량, 변동성을 기반으로 예상 소요 시간을 동적 산출 """
+    # 기본 시간 산출식: (목표 거리 % * 가중치) / (거래량 배율과 상승률의 에너지)
+    speed_factor = max(vol_ratio, 1.0) * max(change_rate, 0.5)
+    estimated_hours = (target_pct * 12.0) / speed_factor
+    estimated_hours = max(2, min(estimated_hours, 168.0)) # 최소 2시간 ~ 최대 7일(168시간) 제한
+    
+    if estimated_hours < 12:
+        return f"약 {int(estimated_hours)}시간 이내 (초단기 폭발형)"
+    elif estimated_hours < 24:
+        return f"약 {int(estimated_hours)}시간 이내 (당일 슈팅형)"
+    elif estimated_hours < 72:
+        days = round(estimated_hours / 24, 1)
+        return f"약 {days}일 이내 (단기 스윙형)"
+    else:
+        days = round(estimated_hours / 24)
+        return f"약 {days}일 소요 예상 (중기 추세형)"
+
 def load_cache():
     if os.path.exists(CACHE_FILE):
         try:
@@ -53,7 +71,7 @@ def get_upbit_market_details():
     return market_dict
 
 if __name__ == "__main__":
-    print("🌐 [올라운드 15분봉 + 예상 소요 기간 안내] 스캐너 가동 중...")
+    print("🌐 [올라운드 15분봉 + 코인별 동적 예상 기간 분석] 스캐너 가동 중...")
     
     market_dict = get_upbit_market_details()
     tracked_cache = load_cache()
@@ -136,6 +154,10 @@ if __name__ == "__main__":
                 
                 sl = min(np.min(lows[-3:]), ma20 * 0.95)
                 
+                # 최종 목표가(tp3)까지의 거리 퍼센트 계산 후 동적 시간 산출
+                target_pct = ((tp3 - current_price) / current_price) * 100
+                dynamic_duration = calculate_dynamic_duration(target_pct, vol_ratio, change_rate)
+                
                 tracked_cache[market] = {"time": current_time, "tp1": tp1, "tp2": tp2, "tp3": tp3, "sl": sl, "reached_targets": []}
                 
                 new_msg = (
@@ -146,7 +168,7 @@ if __name__ == "__main__":
                     f"🎯 **2차 목표**: `{format_price(tp2)}` (`+{((tp2-current_price)/current_price)*100:.1f}%`)\n"
                     f"🎯 **3차 목표**: `{format_price(tp3)}` (`+{((tp3-current_price)/current_price)*100:.1f}%`)\n"
                     f"🛑 **손절가**: `{format_price(sl)}` (`{((sl-current_price)/current_price)*100:.1f}%`)\n\n"
-                    f"⏱ **예상 소요 기간**: `수 시간 ~ 24시간 이내 (초단기 폭발형)`\n"
+                    f"⏱ **예상 소요 기간**: `{dynamic_duration}`\n"
                     f"📊 **포착 근거**: 평소 대비 거래량 `{vol_ratio:.1f}배` 폭발 및 강력한 수급 유입"
                 )
                 notifications.append(new_msg)
@@ -167,6 +189,10 @@ if __name__ == "__main__":
                 
                 sl = min(np.min(lows[-3:]), ma20 * 0.97)
                 
+                # 최종 목표가(tp3)까지의 거리 퍼센트 계산 후 동적 시간 산출
+                target_pct = ((tp3 - current_price) / current_price) * 100
+                dynamic_duration = calculate_dynamic_duration(target_pct, vol_ratio, change_rate)
+                
                 tracked_cache[market] = {"time": current_time, "tp1": tp1, "tp2": tp2, "tp3": tp3, "sl": sl, "reached_targets": []}
                 
                 new_msg = (
@@ -177,7 +203,7 @@ if __name__ == "__main__":
                     f"🎯 **2차 목표**: `{format_price(tp2)}` (`+{((tp2-current_price)/current_price)*100:.1f}%`)\n"
                     f"🎯 **3차 목표**: `{format_price(tp3)}` (`+{((tp3-current_price)/current_price)*100:.1f}%`)\n"
                     f"🛑 **손절가**: `{format_price(sl)}` (`{((sl-current_price)/current_price)*100:.1f}%`)\n\n"
-                    f"⏱ **예상 소요 기간**: `1일 ~ 3일 이내 (완만형 스윙)`\n"
+                    f"⏱ **예상 소요 기간**: `{dynamic_duration}`\n"
                     f"📊 **포착 근거**: 거래량 `{vol_ratio:.1f}배` 유입 + 잔잔한 상승 모멘텀 발생"
                 )
                 notifications.append(new_msg)
@@ -189,4 +215,4 @@ if __name__ == "__main__":
         send_telegram(msg)
 
     save_cache(tracked_cache)
-    print("예상 소요 기간 추가 스캔 완료.")
+    print("코인별 동적 예상 기간 분석 스캔 완료.")
