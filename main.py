@@ -81,7 +81,7 @@ def get_24h_trade_prices(markets):
         return {}
 
 if __name__ == "__main__":
-    print("🌐 [최소 +3% 고수익 타겟팅 스캐너] 가동 중...")
+    print("🌐 [고수익 +3% 타겟팅 실시간 스캐너] 가동 중...")
     
     market_dict = get_upbit_market_details()
     market_list = list(market_dict.keys())
@@ -122,11 +122,10 @@ if __name__ == "__main__":
             if market in tracked_cache:
                 continue
 
-            if candle_body > 0 and change_rate >= 1.0: # 상승세가 더 확실한 종목만
+            if candle_body > 0 and change_rate >= 1.0:
                 recent_atr = np.mean(highs[-5:] - lows[-5:])
                 if recent_atr == 0: recent_atr = current_price * 0.03
 
-                # ATR 배수를 높여 1차 목표가부터 묵직하게 설정
                 tp1 = current_price + (recent_atr * 3.0)
                 tp2 = current_price + (recent_atr * 5.5)
                 tp3 = current_price + (recent_atr * 8.0)
@@ -134,7 +133,7 @@ if __name__ == "__main__":
                 
                 tp1_pct = ((tp1 - current_price) / current_price) * 100
                 
-                # 📌 핵심 필터: 1차 목표가가 +3% 미만이면 무조건 제외
+                # 1차 목표가 +3% 미만이면 제외
                 if tp1_pct < 3.0:
                     continue
 
@@ -149,15 +148,18 @@ if __name__ == "__main__":
                 tracked_cache[market] = {"time": current_time, "tp1": tp1, "tp2": tp2, "tp3": tp3, "sl": sl, "reached_targets": []}
                 
                 new_msg = (
-                    f"🚀 **[메이저·알트 슈팅 포착 (+3% 이상)]** 🚀\n\n"
+                    f"🚀 **[고수익 슈팅 포착 (+3% 이상)]** 🚀\n\n"
                     f"📌 **종목명**: `{korean_name}` (`{market}`)\n"
                     f"💰 **현재가**: `{format_price(current_price)}` (`+{change_rate:.2f}%`)\n"
-                    f"💸 **24h 대금**: `{acc_trade_price / 100_000_000:,.0f}억원`\n\n"
+                    f"💸 **24h 대금**: `{acc_trade_price / 100_000_000:,.0f}억원`\n"
+                    f"📈 **포착 근거**: `15분봉 거래량 폭발 + 강세 양봉`\n\n"
                     f"🎯 **1차 목표**: `{format_price(tp1)}` (`+{tp1_pct:.1f}%`)\n"
                     f"🎯 **2차 목표**: `{format_price(tp2)}` (`+{tp2_pct:.1f}%`)\n"
                     f"🎯 **3차 목표**: `{format_price(tp3)}` (`+{tp3_pct:.1f}%`)\n"
                     f"🛑 **손절가**: `{format_price(sl)}` (`{sl_pct:.1f}%`)\n\n"
-                    f"⏱ **예상 소요 기간**: `{dynamic_duration}`"
+                    f"⚖️ **기대 손익비**: `1 : {abs(tp1_pct / sl_pct):.1f}`\n"
+                    f"⏱ **예상 소요 기간**: `{dynamic_duration}`\n\n"
+                    f"💡 *팁: 1차 목표 도달 시 절반 익절 후 본절가 대응*"
                 )
                 notifications.append(new_msg)
 
