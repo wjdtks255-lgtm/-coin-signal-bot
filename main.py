@@ -19,7 +19,9 @@ def send_telegram(text):
     print(f"텔레그램 전송 응답: {res.text}")
 
 def format_price(price):
-    if price < 10:
+    if price < 1:
+        return f"{price:.4f}원"  # 1원 미만 초저가 코인 (시바이누 등)은 소수점 4자리까지 표시
+    elif price < 10:
         return f"{price:.2f}원"
     elif price < 1000:
         return f"{price:.1f}원"
@@ -94,9 +96,8 @@ if __name__ == "__main__":
 
     for market, korean_name in market_dict.items():
         try:
-            # 최소한의 유동성만 확인 (24시간 거래대금 5억 원 이상)
             acc_trade_price = trade_prices_24h.get(market, 0)
-            if acc_trade_price < 500000000:
+            if acc_trade_price < 500000000: # 5억 이상
                 continue
 
             url = f"https://api.upbit.com/v1/candles/minutes/15?market={market}&count=30"
@@ -121,7 +122,6 @@ if __name__ == "__main__":
             if market in tracked_cache:
                 continue
 
-            # 가격 제어 없이, 양봉이고 상승 중이라면 시세와 상관없이 전부 감지!
             if candle_body > 0 and change_rate > 0:
                 recent_atr = np.mean(highs[-5:] - lows[-5:])
                 if recent_atr == 0: recent_atr = current_price * 0.01
