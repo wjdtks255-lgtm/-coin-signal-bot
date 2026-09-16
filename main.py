@@ -19,7 +19,6 @@ def send_telegram(text):
     print(f"텔레그램 전송 응답: {res.text}")
 
 def format_price(price):
-    """ 저가 코인은 소수점까지 표시하고, 가격이 높으면 정수로 표시 """
     if price < 10:
         return f"{price:.2f}원"
     elif price < 1000:
@@ -28,11 +27,9 @@ def format_price(price):
         return f"{price:,.0f}원"
 
 def calculate_dynamic_duration(target_pct, vol_ratio, change_rate):
-    """ 코인별 목표 거리, 거래량, 변동성을 기반으로 예상 소요 시간을 동적 산출 """
-    # 기본 시간 산출식: (목표 거리 % * 가중치) / (거래량 배율과 상승률의 에너지)
     speed_factor = max(vol_ratio, 1.0) * max(change_rate, 0.5)
     estimated_hours = (target_pct * 12.0) / speed_factor
-    estimated_hours = max(2, min(estimated_hours, 168.0)) # 최소 2시간 ~ 최대 7일(168시간) 제한
+    estimated_hours = max(2, min(estimated_hours, 168.0))
     
     if estimated_hours < 12:
         return f"약 {int(estimated_hours)}시간 이내 (초단기 폭발형)"
@@ -70,39 +67,65 @@ def get_upbit_market_details():
             market_dict[item['market']] = item['korean_name']
     return market_dict
 
+def get_24h_trade_prices(markets):
+    url = f"https://api.upbit.com/v1/ticker?markets={','.join(markets)}"
+    try:
+        res = requests.get(url).json()
+        price_map = {}
+        for item in res:
+            price_map[item['market']] = item['acc_trade_price_24h']
+        return price_map
+    except:
+        return {}
+
 if __name__ == "__main__":
-    print("🌐 [올라운드 15분봉 + 코인별 동적 예상 기간 분석] 스캐너 가동 중...")
+    print("🌐 [진짜 주도주 포착형 15분봉 스캐너] 고성능 필터 가동 중...")
     
     market_dict = get_upbit_market_details()
+    market_list = list(market_dict.keys())
+    
+    trade_prices_24h = get_24h_trade_prices(market_list)
+    
     tracked_cache = load_cache()
     current_time = time.time()
     
-    # 12시간 지난 캐시는 자동 정리
     tracked_cache = {k: v for k, v in tracked_cache.items() if current_time - v.get('time', 0) < 43200}
-    
     notifications = []
 
     for market, korean_name in market_dict.items():
         try:
+            # 유동성 필터: 24시간 거래대금 300억 원 미만인 코인 원천 차단 (에러 수정 완료)
+            acc_trade_price = trade_prices_24h.get(market, 0)
+            if acc_trade_price < 30000000000:
+                continue
+
             url = f"https://api.upbit.com/v1/candles/minutes/15?market={market}&count=30"
             res = requests.get(url).json()
             if len(res) < 25:
                 continue
                 
             res = list(reversed(res))
+            opens = np.array([x['opening_price'] for x in res])
             closes = np.array([x['trade_price'] for x in res])
             highs = np.array([x['high_price'] for x in res])
             lows = np.array([x['low_price'] for x in res])
             volumes = np.array([x['candle_acc_trade_volume'] for x in res])
             
             current_price = closes[-1]
+            current_open = opens[-1]
             prev_close = closes[-2]
             change_rate = ((current_price - prev_close) / prev_close) * 100
             
+            candle_body = current_price - current_open
+            candle_range = highs[-1] - lows[-1]
+            if candle_range > 0:
+                body_ratio = candle_body / candle_range
+            else:
+                body_ratio = 0
+
             ma20 = np.mean(closes[-20:])
             std20 = np.std(closes[-20:])
             
-            # 직전 20개 봉의 평균 거래량 계산 안정화
             avg_volume_20 = np.mean(volumes[-21:-1]) if len(volumes) >= 21 else np.mean(volumes[:-1])
             current_volume = volumes[-1]
             vol_ratio = current_volume / avg_volume_20 if avg_volume_20 > 0 else 0
@@ -139,72 +162,73 @@ if __name__ == "__main__":
             recent_atr = np.mean(highs[-5:] - lows[-5:])
             if recent_atr == 0: recent_atr = current_price * 0.01
 
-            # --- [CASE 2-A: 화끈한 강한 돌파 / 바닥 슈팅] ---
-            is_strong_vol = vol_ratio >= 2.2
-            is_strong_change = (3.0 <= change_rate <= 25.0)
+            # --- [CASE 2-A: 강력한 메이저 급등 / 주도주 돌파] ---
+            is_strong_vol = vol_ratio >= 2.5
+            is_strong_change = (3.5 <= change_rate <= 25.0)
+            is_valid_body = body_ratio >= 0.4
             
-            if is_strong_vol and is_strong_change:
-                tp1 = current_price + (recent_atr * 1.2)
-                tp2 = current_price + (recent_atr * 2.4)
-                tp3 = current_price + (recent_atr * 4.0)
+            if is_strong_vol and is_strong_change and is_valid_body:
+                tp1 = current_price + (recent_atr * 1.3)
+                tp2 = current_price + (recent_atr * 2.6)
+                tp3 = current_price + (recent_atr * 4.2)
                 
-                tp1 = max(tp1, current_price * 1.03)
+                tp1 = max(tp1, current_price * 1.035)
                 tp2 = max(tp2, tp1 * 1.025)
                 tp3 = max(tp3, tp2 * 1.025)
                 
-                sl = min(np.min(lows[-3:]), ma20 * 0.95)
+                sl = min(np.min(lows[-3:]), ma20 * 0.96)
                 
-                # 최종 목표가(tp3)까지의 거리 퍼센트 계산 후 동적 시간 산출
                 target_pct = ((tp3 - current_price) / current_price) * 100
                 dynamic_duration = calculate_dynamic_duration(target_pct, vol_ratio, change_rate)
                 
                 tracked_cache[market] = {"time": current_time, "tp1": tp1, "tp2": tp2, "tp3": tp3, "sl": sl, "reached_targets": []}
                 
                 new_msg = (
-                    f"🔥 **[급등 / 바닥 슈팅 포착]** 🔥\n\n"
+                    f"🔥 **[진짜 주도주 급등 포착]** 🔥\n\n"
                     f"📌 **종목명**: `{korean_name}` (`{market}`)\n"
-                    f"💰 **현재가**: `{format_price(current_price)}` (`+{change_rate:.2f}%`)\n\n"
+                    f"💰 **현재가**: `{format_price(current_price)}` (`+{change_rate:.2f}%`)\n"
+                    f"💸 **24h 대금**: `{acc_trade_price / 100_000_000:,.0f}억원`\n\n"
                     f"🎯 **1차 목표**: `{format_price(tp1)}` (`+{((tp1-current_price)/current_price)*100:.1f}%`)\n"
                     f"🎯 **2차 목표**: `{format_price(tp2)}` (`+{((tp2-current_price)/current_price)*100:.1f}%`)\n"
                     f"🎯 **3차 목표**: `{format_price(tp3)}` (`+{((tp3-current_price)/current_price)*100:.1f}%`)\n"
                     f"🛑 **손절가**: `{format_price(sl)}` (`{((sl-current_price)/current_price)*100:.1f}%`)\n\n"
                     f"⏱ **예상 소요 기간**: `{dynamic_duration}`\n"
-                    f"📊 **포착 근거**: 평소 대비 거래량 `{vol_ratio:.1f}배` 폭발 및 강력한 수급 유입"
+                    f"📊 **포착 근거**: 거래량 `{vol_ratio:.1f}배` 폭발 + 꽉 찬 강세 양봉"
                 )
                 notifications.append(new_msg)
                 continue
 
-            # --- [CASE 2-B: 잔잔한 상승세 / 수급 초입] ---
-            is_mild_vol = vol_ratio >= 1.6
-            is_mild_change = (0.5 <= change_rate < 3.0)
+            # --- [CASE 2-B: 확실한 수급 초기 돌파] ---
+            is_mild_vol = vol_ratio >= 2.0
+            is_mild_change = (1.0 <= change_rate < 3.5)
             
-            if is_mild_vol and is_mild_change:
-                tp1 = current_price + (recent_atr * 1.0)
-                tp2 = current_price + (recent_atr * 2.0)
-                tp3 = current_price + (recent_atr * 3.2)
+            if is_mild_vol and is_mild_change and is_valid_body:
+                tp1 = current_price + (recent_atr * 1.1)
+                tp2 = current_price + (recent_atr * 2.2)
+                tp3 = current_price + (recent_atr * 3.5)
                 
                 tp1 = max(tp1, current_price * 1.03)
                 tp2 = max(tp2, tp1 * 1.02)
                 tp3 = max(tp3, tp2 * 1.02)
                 
-                sl = min(np.min(lows[-3:]), ma20 * 0.97)
+                sl = min(np.min(lows[-3:]), ma20 * 0.98)
                 
-                # 최종 목표가(tp3)까지의 거리 퍼센트 계산 후 동적 시간 산출
                 target_pct = ((tp3 - current_price) / current_price) * 100
                 dynamic_duration = calculate_dynamic_duration(target_pct, vol_ratio, change_rate)
                 
                 tracked_cache[market] = {"time": current_time, "tp1": tp1, "tp2": tp2, "tp3": tp3, "sl": sl, "reached_targets": []}
                 
                 new_msg = (
-                    f"⚡ **[약상승 / 수급 초입 포착]** ⚡\n\n"
+                    f"⚡ **[수급 초기 돌파 포착]** ⚡\n\n"
                     f"📌 **종목명**: `{korean_name}` (`{market}`)\n"
-                    f"💰 **현재가**: `{format_price(current_price)}` (`+{change_rate:.2f}%`)\n\n"
+                    f"💰 **현재가**: `{format_price(current_price)}` (`+{change_rate:.2f}%`)\n"
+                    f"💸 **24h 대금**: `{acc_trade_price / 100_000_000:,.0f}억원`\n\n"
                     f"🎯 **1차 목표**: `{format_price(tp1)}` (`+{((tp1-current_price)/current_price)*100:.1f}%`)\n"
                     f"🎯 **2차 목표**: `{format_price(tp2)}` (`+{((tp2-current_price)/current_price)*100:.1f}%`)\n"
                     f"🎯 **3차 목표**: `{format_price(tp3)}` (`+{((tp3-current_price)/current_price)*100:.1f}%`)\n"
                     f"🛑 **손절가**: `{format_price(sl)}` (`{((sl-current_price)/current_price)*100:.1f}%`)\n\n"
                     f"⏱ **예상 소요 기간**: `{dynamic_duration}`\n"
-                    f"📊 **포착 근거**: 거래량 `{vol_ratio:.1f}배` 유입 + 잔잔한 상승 모멘텀 발생"
+                    f"📊 **포착 근거**: 거래량 `{vol_ratio:.1f}배` + 유의미한 수급 초기 집중"
                 )
                 notifications.append(new_msg)
 
@@ -215,4 +239,5 @@ if __name__ == "__main__":
         send_telegram(msg)
 
     save_cache(tracked_cache)
-    print("코인별 동적 예상 기간 분석 스캔 완료.")
+    print("고성능 정제 필터 스캔 완료.")
+
