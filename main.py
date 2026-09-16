@@ -81,7 +81,7 @@ def get_24h_trade_prices(markets):
         return {}
 
 if __name__ == "__main__":
-    print("🌐 [고수익 타겟팅 실시간 스캐너] 가동 중...")
+    print("🌐 [최소 +3% 고수익 타겟팅 스캐너] 가동 중...")
     
     market_dict = get_upbit_market_details()
     market_list = list(market_dict.keys())
@@ -109,7 +109,7 @@ if __name__ == "__main__":
             opens = np.array([x['opening_price'] for x in res])
             closes = np.array([x['trade_price'] for x in res])
             highs = np.array([x['high_price'] for x in res])
-            lows = np.array([x['low_price'] for x in res]) # 오타 수정 완료
+            lows = np.array([x['low_price'] for x in res])
             volumes = np.array([x['candle_acc_trade_volume'] for x in res])
             
             current_price = closes[-1]
@@ -122,17 +122,20 @@ if __name__ == "__main__":
             if market in tracked_cache:
                 continue
 
-            if candle_body > 0 and change_rate >= 0.5:
+            if candle_body > 0 and change_rate >= 1.0: # 상승세가 더 확실한 종목만
                 recent_atr = np.mean(highs[-5:] - lows[-5:])
-                if recent_atr == 0: recent_atr = current_price * 0.02
+                if recent_atr == 0: recent_atr = current_price * 0.03
 
-                tp1 = current_price + (recent_atr * 1.8)
-                tp2 = current_price + (recent_atr * 3.5)
-                tp3 = current_price + (recent_atr * 5.5)
-                sl = min(np.min(lows[-3:]), current_price * 0.96)
+                # ATR 배수를 높여 1차 목표가부터 묵직하게 설정
+                tp1 = current_price + (recent_atr * 3.0)
+                tp2 = current_price + (recent_atr * 5.5)
+                tp3 = current_price + (recent_atr * 8.0)
+                sl = min(np.min(lows[-3:]), current_price * 0.95)
                 
                 tp1_pct = ((tp1 - current_price) / current_price) * 100
-                if tp1_pct < 1.5:
+                
+                # 📌 핵심 필터: 1차 목표가가 +3% 미만이면 무조건 제외
+                if tp1_pct < 3.0:
                     continue
 
                 tp2_pct = ((tp2 - current_price) / current_price) * 100
@@ -140,13 +143,13 @@ if __name__ == "__main__":
                 sl_pct = ((sl - current_price) / current_price) * 100
 
                 target_pct = tp3_pct
-                vol_ratio = 1.3 
+                vol_ratio = 1.5 
                 dynamic_duration = calculate_dynamic_duration(target_pct, vol_ratio, change_rate)
                 
                 tracked_cache[market] = {"time": current_time, "tp1": tp1, "tp2": tp2, "tp3": tp3, "sl": sl, "reached_targets": []}
                 
                 new_msg = (
-                    f"🚀 **[고수익 슈팅 포착]** 🚀\n\n"
+                    f"🚀 **[메이저·알트 슈팅 포착 (+3% 이상)]** 🚀\n\n"
                     f"📌 **종목명**: `{korean_name}` (`{market}`)\n"
                     f"💰 **현재가**: `{format_price(current_price)}` (`+{change_rate:.2f}%`)\n"
                     f"💸 **24h 대금**: `{acc_trade_price / 100_000_000:,.0f}억원`\n\n"
@@ -165,4 +168,4 @@ if __name__ == "__main__":
         send_telegram(msg)
 
     save_cache(tracked_cache)
-    print("고수익 스캔 완료.")
+    print("고수익(+3% 이상) 스캔 완료.")
