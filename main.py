@@ -109,7 +109,7 @@ if __name__ == "__main__":
             opens = np.array([x['opening_price'] for x in res])
             closes = np.array([x['trade_price'] for x in res])
             highs = np.array([x['high_price'] for x in res])
-            lows = np.array([x['low_price'] for xin res])
+            lows = np.array([x['low_price'] for x in res]) # 오타 수정 완료
             volumes = np.array([x['candle_acc_trade_volume'] for x in res])
             
             current_price = closes[-1]
@@ -122,18 +122,15 @@ if __name__ == "__main__":
             if market in tracked_cache:
                 continue
 
-            # 양봉이면서 최소 0.5% 이상 힘 있게 밀어 올리는 종목만 타겟팅
             if candle_body > 0 and change_rate >= 0.5:
                 recent_atr = np.mean(highs[-5:] - lows[-5:])
                 if recent_atr == 0: recent_atr = current_price * 0.02
 
-                # 목표 수익률을 확실히 높여서 설정 (ATR 배수 상향)
                 tp1 = current_price + (recent_atr * 1.8)
                 tp2 = current_price + (recent_atr * 3.5)
                 tp3 = current_price + (recent_atr * 5.5)
                 sl = min(np.min(lows[-3:]), current_price * 0.96)
                 
-                # 최소 1차 목표가가 +1.5% 미만이면 거름
                 tp1_pct = ((tp1 - current_price) / current_price) * 100
                 if tp1_pct < 1.5:
                     continue
