@@ -1,37 +1,39 @@
-name: Stock Auto Trading Bot
+name: Upbit Signal Bot
 
 on:
   schedule:
-    - cron: '15 6 * * 1-5'  # 한국 시간 평일 오후 3시 15분 장 마감 전 실행
-
+    - cron: '*/30 * * * *'  # 30분마다 자동 실행 (월 사용량 ~1,440분으로 안전)
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write  # GitHub Actions가 캐시(tracked_coins.json)를 커밋/푸시할 수 있는 권한
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install dependencies and Run Bot
+      - name: Install dependencies
+        run: |
+          pip install requests numpy
+
+      - name: Run Bot Script
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: |
-          python -m pip install --upgrade pip
-          pip install finance-datareader pandas requests
-          python main.py
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
 
-      - name: Commit and push updated active positions
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Auto update active_positions.json"
-          file_patterns: active_positions.json
+      - name: Commit and push cache changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add tracked_coins.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: update tracked_coins cache [skip ci]" && git push)
