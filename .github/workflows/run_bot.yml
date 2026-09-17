@@ -2,7 +2,8 @@ name: Upbit Signal Bot
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # 30분마다 자동 실행 (월 사용량 ~1,440분으로 안전)
+    # 월요일부터 금요일까지 UTC 기준 오전 6시 30분 (한국 시간 기준 오후 3시 30분)에 실행
+    - cron: '30 6 * * 1-5'
   workflow_dispatch:
 
 permissions:
