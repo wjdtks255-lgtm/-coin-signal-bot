@@ -1,0 +1,42 @@
+{
+    "KRW-LSK": {
+        "last_price": 432.0,
+        "target_1": 444.96000000000004,
+        "last_alert": "2026-09-17T13:05:58.056653"
+    },
+    "KRW-USDT": {
+        "last_price": 1376.0,
+        "target_1": 1417.28,
+        "last_alert": "2026-09-17T13:05:58.570085"
+    },
+    "KRW-FOLD": {
+        "last_price": 87.6,
+        "target_1": 90.228,
+        "last_alert": "2026-09-17T13:05:59.125131"
+    },
+    "KRW-JPYC": {
+        "last_price": 20.6,
+        "target_1": 21.218000000000004,
+        "last_alert": "2026-09-17T13:05:59.634261"
+    },
+    "KRW-ETH": {
+        "last_price": 3390000.0,
+        "target_1": 3491700.0,
+        "last_alert": "2026-09-17T13:06:00.152449"
+    },
+    "KRW-XRP": {
+        "last_price": 1800.0,
+        "target_1": 1854.0,
+        "last_alert": "2026-09-17T13:06:00.692230"
+    },
+    "KRW-DRV": {
+        "last_price": 322.0,
+        "target_1": 331.66,
+        "last_alert": "2026-09-17T13:06:04.411777"
+    },
+    "KRW-BTC": {
+        "last_price": 105777000.0,
+        "target_1": 108950310.0,
+        "last_alert": "2026-09-17T13:06:04.928611"
+    }
+}
