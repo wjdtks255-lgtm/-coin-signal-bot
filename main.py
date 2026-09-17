@@ -81,7 +81,7 @@ def get_24h_trade_prices(markets):
         return {}
 
 if __name__ == "__main__":
-    print("🌐 [고수익 +3% 타겟팅 실시간 스캐너] 가동 중...")
+    print("🌐 [고점 방어 +3% 타겟팅 실시간 스캐너] 가동 중...")
     
     market_dict = get_upbit_market_details()
     market_list = list(market_dict.keys())
@@ -91,7 +91,8 @@ if __name__ == "__main__":
     tracked_cache = load_cache()
     current_time = time.time()
     
-    tracked_cache = {k: v for k, v in tracked_cache.items() if current_time - v.get('time', 0) < 43200}
+    # 📌 캐시 유지 시간을 24시간(86400초)으로 늘려 동일 종목 반복 알림 철저 차단
+    tracked_cache = {k: v for k, v in tracked_cache.items() if current_time - v.get('time', 0) < 86400}
     notifications = []
 
     for market, korean_name in market_dict.items():
@@ -120,6 +121,15 @@ if __name__ == "__main__":
             candle_body = current_price - current_open
             
             if market in tracked_cache:
+                continue
+
+            # 🛡️ [방어선 1] 이미 고점을 찍고 윗꼬리를 길게 달며 밀려 내려오는 음봉/약세 캔들 차단
+            high_price_15m = highs[-1]
+            if current_price < (high_price_15m * 0.985): 
+                continue
+
+            # 🛡️ [방어선 2] 당일 너무 과도하게 폭등한 자리(설거지 및 추격매수 위험 구간) 배제
+            if change_rate >= 15.0: 
                 continue
 
             if candle_body > 0 and change_rate >= 1.0:
@@ -170,4 +180,4 @@ if __name__ == "__main__":
         send_telegram(msg)
 
     save_cache(tracked_cache)
-    print("고수익(+3% 이상) 스캔 완료.")
+    print("고점 방어 스캔 완료.")
