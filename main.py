@@ -65,17 +65,30 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
     target_2 = current_price * 1.06  # +6.0%
     target_3 = current_price * 1.09  # +9.0%
 
-    # [스마트 트래킹 검증] 이전 목표가를 돌파한 경우에만 추가 알림 허용
+    # [스마트 트래킹 검증 강화] 중복 알림 차단 로직
     cache = load_cache()
     now = datetime.now()
     
     if ticker in cache:
         prev_target_1 = cache[ticker].get("target_1", 0)
-        if current_price <= prev_target_1:
-            print(f" -> [스킵] 기존 시그널 구간 유지 중 (이전 TP1 미돌파)")
+        last_alert_time_str = cache[ticker].get("last_alert", "")
+        
+        # 1) 최근 4시간 이내에 알림 이력이 있다면 무조건 스킵 (쿨타임)
+        if last_alert_time_str:
+            try:
+                last_alert_time = datetime.fromisoformat(last_alert_time_str)
+                if now - last_alert_time < timedelta(hours=4):
+                    print(f" -> [스킵] 최근 4시간 내 알림 이력 존재 ({korean_name})")
+                    return
+            except Exception:
+                pass
+
+        # 2) 가격이 이전 TP1보다 최소 1.5% 이상 더 치고 올라가지 않았으면 횡보 중으로 판단하여 스킵
+        if current_price < prev_target_1 * 1.015:
+            print(f" -> [스킵] 상향 파동 미흡 - 이전 TP1 근처 횡보 중 ({korean_name})")
             return
         else:
-            print(f"🔥 [상향 파동 연장] {ticker} - 이전 목표가 돌파 후 재포착")
+            print(f"🔥 [상향 파동 연장] {korean_name} - 추가 슈팅 포착!")
 
     # [전문가형 하이엔드 메시지 포맷]
     message = (
@@ -98,7 +111,7 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
     print(f"🔥 [알림 전송 완료] {korean_name}({ticker})")
     send_telegram_message(message)
 
-    # 캐시 갱신 (현재 1차 목표가를 기준으로 저장)
+    # 캐시 갱신 (현재가 기준 목표가 및 발송 시각 저장)
     cache[ticker] = {
         "last_price": current_price,
         "target_1": target_1,
