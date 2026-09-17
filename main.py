@@ -1,203 +1,76 @@
-import os
-import requests
-import numpy as np
 import json
-import time
-import subprocess
+import os
+from datetime import datetime, timedelta
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 CACHE_FILE = "tracked_coins.json"
-
-def send_telegram(text):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("❌ 텔레그램 토큰 또는 챗 아이디가 설정되지 않았습니다!")
-        return
-    
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
-    res = requests.post(url, json=payload)
-    print(f"텔레그램 전송 응답: {res.text}")
-
-def format_price(price):
-    if price < 1:
-        return f"{price:.4f}원"
-    elif price < 10:
-        return f"{price:.2f}원"
-    elif price < 1000:
-        return f"{price:.1f}원"
-    else:
-        return f"{price:,.0f}원"
-
-def calculate_dynamic_duration(target_pct, vol_ratio, change_rate):
-    speed_factor = max(vol_ratio, 1.0) * max(change_rate, 0.5)
-    estimated_hours = (target_pct * 12.0) / speed_factor
-    estimated_hours = max(2, min(estimated_hours, 168.0))
-    
-    if estimated_hours < 12:
-        return f"약 {int(estimated_hours)}시간 이내 (초단기 폭발형)"
-    elif estimated_hours < 24:
-        return f"약 {int(estimated_hours)}시간 이내 (당일 슈팅형)"
-    elif estimated_hours < 72:
-        days = round(estimated_hours / 24, 1)
-        return f"약 {days}일 이내 (단기 스윙형)"
-    else:
-        days = round(estimated_hours / 24)
-        return f"약 {days}일 소요 예상 (중기 추세형)"
+MIN_ACC_TRADE_PRICE = 300_000_000_000  # 최소 거래대금 300억 원 이상
+MAX_ALLOWABLE_STOP_LOSS_PCT = 5.0      # 최대 허용 손절 폭 5% 이내
+COOLDOWN_HOURS = 24                    # 동일 종목 24시간 중복 방지 쿨타임
 
 def load_cache():
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, "r") as f:
-                return json.load(f)
-        except:
-            pass
-    return {}
-
-def save_cache(cache):
+    if not os.path.exists(CACHE_FILE):
+        return {}
     try:
-        with open(CACHE_FILE, "w") as f:
-            json.dump(cache, f)
-    except Exception as e:
-        print(f"캐시 저장 에러: {e}")
-
-def get_upbit_market_details():
-    url = "https://api.upbit.com/v1/market/all"
-    res = requests.get(url).json()
-    market_dict = {}
-    for item in res:
-        if item['market'].startswith('KRW-') and item['market'] != 'KRW-BTC':
-            market_dict[item['market']] = item['korean_name']
-    return market_dict
-
-def get_24h_trade_prices(markets):
-    url = f"https://api.upbit.com/v1/ticker?markets={','.join(markets)}"
-    try:
-        res = requests.get(url).json()
-        price_map = {}
-        for item in res:
-            price_map[item['market']] = item['acc_trade_price_24h']
-        return price_map
-    except:
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
         return {}
 
-def git_commit_and_push():
-    """알림 기록(json)을 깃허브 레포지토리에 자동으로 저장하는 함수"""
-    try:
-        subprocess.run(["git", "config", "--global", "user.name", "github-actions[bot]"], check=True)
-        subprocess.run(["git", "config", "--global", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
-        subprocess.run(["git", "add", CACHE_FILE], check=True)
-        # 커밋할 내용이 있을 때만 푸시 진행
-        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True)
-        if status.stdout.strip():
-            subprocess.run(["git", "commit", "-m", "Update tracked coins cache [skip ci]"], check=True)
-            subprocess.run(["git", "push"], check=True)
-            print("🔄 깃허브 캐시 동기화(Push) 완료!")
-        else:
-            print("📌 변경된 캐시 내용이 없습니다.")
-    except Exception as e:
-        print(f"⚠️ 깃허브 자동 푸시 중 에러 발생: {e}")
+def save_cache(cache):
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=4)
 
-if __name__ == "__main__":
-    print("🌐 [깃허브 메모리 연동형 +3% 타겟팅 스캐너] 가동 중...")
+def evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct):
+    # [조건 1] 300억 미만 저대금 종목 차단
+    if acc_trade_price < MIN_ACC_TRADE_PRICE:
+        return
+
+    # [조건 2] 손절 폭이 -5%를 초과하면 차단
+    if calculated_stop_loss_pct > MAX_ALLOWABLE_STOP_LOSS_PCT:
+        return
+
+    # [조건 3] 거래량 폭발 조건 미충족 시 차단
+    if not volume_spike_flag:
+        return
+
+    # [조건 4] 24시간 재알림 쿨타임 검증
+    cache = load_cache()
+    now = datetime.now()
     
-    market_dict = get_upbit_market_details()
-    market_list = list(market_dict.keys())
+    if ticker in cache:
+        last_alert_str = cache[ticker].get("last_alert")
+        if last_alert_str:
+            last_alert_time = datetime.fromisoformat(last_alert_str)
+            if now - last_alert_time < timedelta(hours=COOLDOWN_HOURS):
+                return
+
+    # [가격 산출] 손절가 및 1·2·3차 목표가 계산
+    stop_loss = current_price * (1 - (calculated_stop_loss_pct / 100))
+    target_1 = current_price * 1.03  # 1차 목표 (+3.0%)
+    target_2 = current_price * 1.06  # 2차 목표 (+6.0%)
+    target_3 = current_price * 1.09  # 3차 목표 (+9.0%)
+
+    # [전문가형 메시지 포맷 (1~3차 목표가 포함)]
+    message = (
+        f"📊 **[QUANT SIGNAL] 현물 마켓 트렌드 포착**\n"
+        f"────────────────────────\n"
+        f"▪ **종목명**: `{ticker}`\n"
+        f"▪ **현재가**: `{current_price:,.1f} KRW`\n"
+        f"▪ **24H 거래대금**: `{acc_trade_price / 100_000_000:,.1f}억 원`\n\n"
+        f"🎯 **TARGET (분할 목표가)**\n"
+        f"  └ 1차 목표: `{target_1:,.1f}원` (+3.0%)\n"
+        f"  └ 2차 목표: `{target_2:,.1f}원` (+6.0%)\n"
+        f"  └ 3차 목표: `{target_3:,.1f}원` (+9.0%)\n\n"
+        f"🛡️ **RISK MANAGEMENT (방어)**\n"
+        f"  └ 타이트 손절가: `{stop_loss:,.1f}원` (-{calculated_stop_loss_pct}%)\n"
+        f"────────────────────────\n"
+        f"💡 *Notice: 300억 이상 유동성 검증 및 리스크 필터 적용완료*"
+    )
     
-    trade_prices_24h = get_24h_trade_prices(market_list)
-    
-    tracked_cache = load_cache()
-    current_time = time.time()
-    
-    # 24시간(86400초) 지난 기록은 자동 삭제
-    tracked_cache = {k: v for k, v in tracked_cache.items() if current_time - v.get('time', 0) < 86400}
-    notifications = []
+    # 텔레그램 전송 함수 (사용 중인 함수로 연동)
+    # send_telegram_message(message)
+    print(message)  # 테스트용 출력
 
-    for market, korean_name in market_dict.items():
-        try:
-            acc_trade_price = trade_prices_24h.get(market, 0)
-            if acc_trade_price < 500000000: # 5억 이상
-                continue
-
-            url = f"https://api.upbit.com/v1/candles/minutes/15?market={market}&count=30"
-            res = requests.get(url).json()
-            if len(res) < 25:
-                continue
-                
-            res = list(reversed(res))
-            opens = np.array([x['opening_price'] for x in res])
-            closes = np.array([x['trade_price'] for x in res])
-            highs = np.array([x['high_price'] for x in res])
-            lows = np.array([x['low_price'] for x in res])
-            
-            current_price = closes[-1]
-            current_open = opens[-1]
-            prev_close = closes[-2]
-            change_rate = ((current_price - prev_close) / prev_close) * 100
-            
-            candle_body = current_price - current_open
-            
-            if market in tracked_cache:
-                continue
-
-            # 고점 윗꼬리 이탈 방어 필터
-            high_price_15m = highs[-1]
-            if current_price < (high_price_15m * 0.985): 
-                continue
-
-            # 당일 과열 폭등 구간(설거지) 필터
-            if change_rate >= 15.0: 
-                continue
-
-            if candle_body > 0 and change_rate >= 1.0:
-                recent_atr = np.mean(highs[-5:] - lows[-5:])
-                if recent_atr == 0: recent_atr = current_price * 0.03
-
-                tp1 = current_price + (recent_atr * 3.0)
-                tp2 = current_price + (recent_atr * 5.5)
-                tp3 = current_price + (recent_atr * 8.0)
-                sl = min(np.min(lows[-3:]), current_price * 0.95)
-                
-                tp1_pct = ((tp1 - current_price) / current_price) * 100
-                
-                if tp1_pct < 3.0:
-                    continue
-
-                tp2_pct = ((tp2 - current_price) / current_price) * 100
-                tp3_pct = ((tp3 - current_price) / current_price) * 100
-                sl_pct = ((sl - current_price) / current_price) * 100
-
-                target_pct = tp3_pct
-                vol_ratio = 1.5 
-                dynamic_duration = calculate_dynamic_duration(target_pct, vol_ratio, change_rate)
-                
-                tracked_cache[market] = {"time": current_time, "tp1": tp1, "tp2": tp2, "tp3": tp3, "sl": sl}
-                
-                new_msg = (
-                    f"🚀 **[고수익 슈팅 포착 (+3% 이상)]** 🚀\n\n"
-                    f"📌 **종목명**: `{korean_name}` (`{market}`)\n"
-                    f"💰 **현재가**: `{format_price(current_price)}` (`+{change_rate:.2f}%`)\n"
-                    f"💸 **24h 대금**: `{acc_trade_price / 100_000_000:,.0f}억원`\n"
-                    f"📈 **포착 근거**: `15분봉 거래량 폭발 + 강세 양봉`\n\n"
-                    f"🎯 **1차 목표**: `{format_price(tp1)}` (`+{tp1_pct:.1f}%`)\n"
-                    f"🎯 **2차 목표**: `{format_price(tp2)}` (`+{tp2_pct:.1f}%`)\n"
-                    f"🎯 **3차 목표**: `{format_price(tp3)}` (`+{tp3_pct:.1f}%`)\n"
-                    f"🛑 **손절가**: `{format_price(sl)}` (`{sl_pct:.1f}%`)\n\n"
-                    f"⚖️ **기대 손익비**: `1 : {abs(tp1_pct / sl_pct):.1f}`\n"
-                    f"⏱ **예상 소요 기간**: `{dynamic_duration}`\n\n"
-                    f"💡 *팁: 1차 목표 도달 시 절반 익절 후 본절가 대응*"
-                )
-                notifications.append(new_msg)
-
-        except Exception as e:
-            pass
-
-    for msg in notifications:
-        send_telegram(msg)
-
-    save_cache(tracked_cache)
-    
-    # 깃허브에 기록 동기화 실행
-    git_commit_and_push()
-    print("스캔 완료.")
-
+    # 쿨타임 저장
+    cache[ticker] = {"last_alert": now.isoformat()}
+    save_cache(cache)
