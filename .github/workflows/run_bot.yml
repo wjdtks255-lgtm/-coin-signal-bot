@@ -2,11 +2,11 @@ name: Upbit Signal Bot
 
 on:
   schedule:
-    - cron: '0 * * * *'  # 1시간마다 실행 (원하시는 주기로 변경 가능)
+    - cron: '*/30 * * * *'  # 30분마다 자동 실행 (월 사용량 ~1,440분으로 안전)
   workflow_dispatch:
 
 permissions:
-  contents: write  # GitHub Actions가 저장소에 캐시 파일을 커밋/푸시할 수 있도록 권한 부여
+  contents: write  # GitHub Actions가 캐시(tracked_coins.json)를 커밋/푸시할 수 있는 권한
 
 jobs:
   run-bot:
