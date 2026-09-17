@@ -2,10 +2,11 @@ import json
 import os
 from datetime import datetime, timedelta
 
+# 🛠️ 실전 매매에 맞게 기준을 살짝 유연하게 조정
 CACHE_FILE = "tracked_coins.json"
-MIN_ACC_TRADE_PRICE = 300_000_000_000  # 최소 거래대금 300억 원 이상
-MAX_ALLOWABLE_STOP_LOSS_PCT = 5.0      # 최대 허용 손절 폭 5% 이내
-COOLDOWN_HOURS = 24                    # 동일 종목 24시간 중복 방지 쿨타임
+MIN_ACC_TRADE_PRICE = 100_000_000_000  # 1. 최소 거래대금 100억 원 이상 (중·대형 위주)
+MAX_ALLOWABLE_STOP_LOSS_PCT = 7.0      # 2. 최대 허용 손절 폭 7% 이내 (변동성 고려)
+COOLDOWN_HOURS = 24                    # 3. 동일 종목 24시간 중복 방지 쿨타임
 
 def load_cache():
     if not os.path.exists(CACHE_FILE):
@@ -21,11 +22,11 @@ def save_cache(cache):
         json.dump(cache, f, ensure_ascii=False, indent=4)
 
 def evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct):
-    # [조건 1] 300억 미만 저대금 종목 차단
+    # [조건 1] 100억 미만 저대금 종목 차단
     if acc_trade_price < MIN_ACC_TRADE_PRICE:
         return
 
-    # [조건 2] 손절 폭이 -5%를 초과하면 차단
+    # [조건 2] 손절 폭이 7%를 초과하면 차단
     if calculated_stop_loss_pct > MAX_ALLOWABLE_STOP_LOSS_PCT:
         return
 
@@ -50,7 +51,7 @@ def evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spik
     target_2 = current_price * 1.06  # 2차 목표 (+6.0%)
     target_3 = current_price * 1.09  # 3차 목표 (+9.0%)
 
-    # [전문가형 메시지 포맷 (1~3차 목표가 포함)]
+    # [전문가형 메시지 포맷]
     message = (
         f"📊 **[QUANT SIGNAL] 현물 마켓 트렌드 포착**\n"
         f"────────────────────────\n"
@@ -64,12 +65,12 @@ def evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spik
         f"🛡️ **RISK MANAGEMENT (방어)**\n"
         f"  └ 타이트 손절가: `{stop_loss:,.1f}원` (-{calculated_stop_loss_pct}%)\n"
         f"────────────────────────\n"
-        f"💡 *Notice: 300억 이상 유동성 검증 및 리스크 필터 적용완료*"
+        f"💡 *Notice: 100억 이상 유동성 검증 및 리스크 필터 적용완료*"
     )
     
-    # 텔레그램 전송 함수 (사용 중인 함수로 연동)
+    # 텔레그램 전송 함수 (사용 중이신 전송 함수로 연동해주세요. 예: send_telegram_message(message))
     # send_telegram_message(message)
-    print(message)  # 테스트용 출력
+    print(message)  # 액션 로그 출력용
 
     # 쿨타임 저장
     cache[ticker] = {"last_alert": now.isoformat()}
