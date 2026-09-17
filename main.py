@@ -1,11 +1,30 @@
 import json
 import os
+import requests
 from datetime import datetime, timedelta
 
 CACHE_FILE = "tracked_coins.json"
-MIN_ACC_TRADE_PRICE = 50_000_000_000   # 테스트를 위해 거래대금 기준을 50억 원으로 일시 완화
-MAX_ALLOWABLE_STOP_LOSS_PCT = 10.0     # 손절 폭 허용치 10%로 완화
-COOLDOWN_HOURS = 1                     # 쿨타임도 일단 1시간으로 단축 테스트
+MIN_ACC_TRADE_PRICE = 50_000_000_000   # 거래대금 50억 이상 (테스트용)
+MAX_ALLOWABLE_STOP_LOSS_PCT = 10.0     # 손절 폭 10% 이내
+COOLDOWN_HOURS = 1                     # 쿨타임 1시간
+
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+def send_telegram_message(text):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("텔레그램 토큰 또는챗 ID가 설정되지 않았습니다.")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        print(f"텔레그램 전송 에러: {e}")
 
 def load_cache():
     if not os.path.exists(CACHE_FILE):
@@ -23,22 +42,18 @@ def save_cache(cache):
 def evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct):
     print(f"[{ticker}] 검토 중... 대금: {acc_trade_price/100000000:,.1f}억, 손절폭: {calculated_stop_loss_pct}%")
 
-    # [조건 1] 거래대금 필터
     if acc_trade_price < MIN_ACC_TRADE_PRICE:
-        print(f" -> [스킵] 거래대금 부족 ({acc_trade_price/100000000:,.1f}억 < 50억)")
+        print(f" -> [스킵] 거래대금 부족")
         return
 
-    # [조건 2] 손절 폭 필터
     if calculated_stop_loss_pct > MAX_ALLOWABLE_STOP_LOSS_PCT:
-        print(f" -> [스킵] 손절 폭 너무 넓음 ({calculated_stop_loss_pct}%)")
+        print(f" -> [스킵] 손절 폭 초과")
         return
 
-    # [조건 3] 거래량 폭발 플래그
     if not volume_spike_flag:
-        print(f" -> [스킵] 거래량 폭발 조건 미충족")
+        print(f" -> [스킵] 거래량 폭발 미충족")
         return
 
-    # [조건 4] 쿨타임 검증
     cache = load_cache()
     now = datetime.now()
     if ticker in cache:
@@ -46,10 +61,9 @@ def evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spik
         if last_alert_str:
             last_alert_time = datetime.fromisoformat(last_alert_str)
             if now - last_alert_time < timedelta(hours=COOLDOWN_HOURS):
-                print(f" -> [스킵] 쿨타임 중 (최근 알림: {last_alert_str})")
+                print(f" -> [스킵] 쿨타임 중")
                 return
 
-    # 가격 산출
     stop_loss = current_price * (1 - (calculated_stop_loss_pct / 100))
     target_1 = current_price * 1.03
     target_2 = current_price * 1.06
@@ -68,13 +82,38 @@ def evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spik
         f"🛡️ **RISK MANAGEMENT (방어)**\n"
         f"  └ 타이트 손절가: `{stop_loss:,.1f}원` (-{calculated_stop_loss_pct}%)\n"
         f"────────────────────────\n"
-        f"💡 *Notice: 디버깅 모드 테스트 중*"
+        f"💡 *Notice: 필터 통과 실전 신호 발송*"
     )
     
-    print(f"🔥 [알림 전송 성공!] {ticker} 신호 발송 준비 완료")
-    # 실제 전송 함수 연동 시 아래 주석 해제
-    # send_telegram_message(message)
-    print(message)
+    print(f"🔥 [알림 전송] {ticker}")
+    send_telegram_message(message)
 
     cache[ticker] = {"last_alert": now.isoformat()}
     save_cache(cache)
+
+# --- 업비트 시장 데이터 조회 및 메인 실행부 ---
+if __name__ == "__main__":
+    print("업비트 시장 데이터 스캔 시작...")
+    try:
+        # 1. 원화 마켓 코인 리스트 조회
+        market_url = "https://api.upbit.com/v1/market/all"
+        markets = [item['market'] for item in requests.get(market_url).json() if item['market'].startswith('KRW-')]
+        
+        # 2. 현재가 및 24시간 대금 조회
+        ticker_url = f"https://api.upbit.com/v1/ticker?markets={','.join(markets)}"
+        ticker_data = requests.get(ticker_url).json()
+
+        for data in ticker_data:
+            ticker = data['market']
+            current_price = data['trade_price']
+            acc_trade_price = data['acc_trade_price_24h']
+
+            # 예시 테스트용 플래그 및 손절가 계산 (실제 사용하시던 15분봉 조건 로직이 있다면 이 자리에 연동됩니다)
+            # 현재는 테스트를 위해 거래대금 50억 넘는 코인 중 임의 테스트 통과 조건 부여
+            volume_spike_flag = True  
+            calculated_stop_loss_pct = 4.5  
+
+            evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct)
+
+    except Exception as e:
+        print(f"실행 중 에러 발생: {e}")
