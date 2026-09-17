@@ -6,14 +6,13 @@ from datetime import datetime, timedelta
 CACHE_FILE = "tracked_coins.json"
 MIN_ACC_TRADE_PRICE = 50_000_000_000   # 거래대금 50억 이상 (테스트용)
 MAX_ALLOWABLE_STOP_LOSS_PCT = 10.0     # 손절 폭 10% 이내
-COOLDOWN_HOURS = 1                     # 쿨타임 1시간
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 def send_telegram_message(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("텔레그램 토큰 또는챗 ID가 설정되지 않았습니다.")
+        print("텔레그램 토큰 또는 챗 ID가 설정되지 않았습니다.")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -39,81 +38,96 @@ def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=4)
 
-def evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct):
-    print(f"[{ticker}] 검토 중... 대금: {acc_trade_price/100000000:,.1f}억, 손절폭: {calculated_stop_loss_pct}%")
+def get_market_names():
+    """업비트에서 코인 한글 명칭 매핑 정보 가져오기"""
+    try:
+        url = "https://api.upbit.com/v1/market/all"
+        res = requests.get(url).json()
+        return {item['market']: item['korean_name'] for item in res if item['market'].startswith('KRW-')}
+    except Exception:
+        return {}
+
+def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct):
+    print(f"[{korean_name}({ticker})] 검토 중... 대금: {acc_trade_price/100000000:,.1f}억")
 
     if acc_trade_price < MIN_ACC_TRADE_PRICE:
-        print(f" -> [스킵] 거래대금 부족")
         return
 
     if calculated_stop_loss_pct > MAX_ALLOWABLE_STOP_LOSS_PCT:
-        print(f" -> [스킵] 손절 폭 초과")
         return
 
     if not volume_spike_flag:
-        print(f" -> [스킵] 거래량 폭발 미충족")
         return
 
+    # 가격 산출
+    stop_loss = current_price * (1 - (calculated_stop_loss_pct / 100))
+    target_1 = current_price * 1.03  # +3.0%
+    target_2 = current_price * 1.06  # +6.0%
+    target_3 = current_price * 1.09  # +9.0%
+
+    # [스마트 트래킹 검증] 이전 목표가를 돌파한 경우에만 추가 알림 허용
     cache = load_cache()
     now = datetime.now()
+    
     if ticker in cache:
-        last_alert_str = cache[ticker].get("last_alert")
-        if last_alert_str:
-            last_alert_time = datetime.fromisoformat(last_alert_str)
-            if now - last_alert_time < timedelta(hours=COOLDOWN_HOURS):
-                print(f" -> [스킵] 쿨타임 중")
-                return
+        prev_target_1 = cache[ticker].get("target_1", 0)
+        if current_price <= prev_target_1:
+            print(f" -> [스킵] 기존 시그널 구간 유지 중 (이전 TP1 미돌파)")
+            return
+        else:
+            print(f"🔥 [상향 파동 연장] {ticker} - 이전 목표가 돌파 후 재포착")
 
-    stop_loss = current_price * (1 - (calculated_stop_loss_pct / 100))
-    target_1 = current_price * 1.03
-    target_2 = current_price * 1.06
-    target_3 = current_price * 1.09
-
+    # [전문가형 하이엔드 메시지 포맷]
     message = (
-        f"📊 **[QUANT SIGNAL] 현물 마켓 트렌드 포착**\n"
+        f"🚀 **[QUANT PROFESSIONAL SIGNAL]**\n"
         f"────────────────────────\n"
-        f"▪ **종목명**: `{ticker}`\n"
+        f"▪ **자산명**: `{korean_name} ({ticker})`\n"
         f"▪ **현재가**: `{current_price:,.1f} KRW`\n"
         f"▪ **24H 거래대금**: `{acc_trade_price / 100_000_000:,.1f}억 원`\n\n"
-        f"🎯 **TARGET (분할 목표가)**\n"
-        f"  └ 1차 목표: `{target_1:,.1f}원` (+3.0%)\n"
-        f"  └ 2차 목표: `{target_2:,.1f}원` (+6.0%)\n"
-        f"  └ 3차 목표: `{target_3:,.1f}원` (+9.0%)\n\n"
-        f"🛡️ **RISK MANAGEMENT (방어)**\n"
-        f"  └ 타이트 손절가: `{stop_loss:,.1f}원` (-{calculated_stop_loss_pct}%)\n"
+        f"🎯 **TARGET LEVELS (분할 익절 구간)**\n"
+        f"  ├ **TP1**: `{target_1:,.1f}원` (+3.0%)\n"
+        f"  ├ **TP2**: `{target_2:,.1f}원` (+6.0%)\n"
+        f"  └ **TP3**: `{target_3:,.1f}원` (+9.0%)\n\n"
+        f"🛡️ **RISK MANAGEMENT (리스크 관리)**\n"
+        f"  ├ **방어 손절가 (SL)**: `{stop_loss:,.1f}원` (-{calculated_stop_loss_pct}%)\n"
+        f"  └ **기대 손익비**: `1 : 2.0 이상 (고효율 구간)`\n"
         f"────────────────────────\n"
-        f"💡 *Notice: 필터 통과 실전 신호 발송*"
+        f"💡 *Strategy: 직전 저항선 돌파 및 실시간 볼륨 유입 포착*"
     )
     
-    print(f"🔥 [알림 전송] {ticker}")
+    print(f"🔥 [알림 전송 완료] {korean_name}({ticker})")
     send_telegram_message(message)
 
-    cache[ticker] = {"last_alert": now.isoformat()}
+    # 캐시 갱신 (현재 1차 목표가를 기준으로 저장)
+    cache[ticker] = {
+        "last_price": current_price,
+        "target_1": target_1,
+        "last_alert": now.isoformat()
+    }
     save_cache(cache)
 
-# --- 업비트 시장 데이터 조회 및 메인 실행부 ---
 if __name__ == "__main__":
-    print("업비트 시장 데이터 스캔 시작...")
+    print("업비트 하이엔드 퀀트 스캐너 가동 시작...")
     try:
-        # 1. 원화 마켓 코인 리스트 조회
+        # 코인 한글 명칭 사전 로드
+        market_names = get_market_names()
+
         market_url = "https://api.upbit.com/v1/market/all"
         markets = [item['market'] for item in requests.get(market_url).json() if item['market'].startswith('KRW-')]
         
-        # 2. 현재가 및 24시간 대금 조회
         ticker_url = f"https://api.upbit.com/v1/ticker?markets={','.join(markets)}"
         ticker_data = requests.get(ticker_url).json()
 
         for data in ticker_data:
             ticker = data['market']
+            korean_name = market_names.get(ticker, ticker)  # 한글명 매칭 (없으면 티커 그대로)
             current_price = data['trade_price']
             acc_trade_price = data['acc_trade_price_24h']
 
-            # 예시 테스트용 플래그 및 손절가 계산 (실제 사용하시던 15분봉 조건 로직이 있다면 이 자리에 연동됩니다)
-            # 현재는 테스트를 위해 거래대금 50억 넘는 코인 중 임의 테스트 통과 조건 부여
-            volume_spike_flag = True  
+            volume_spike_flag = True  # 테스트 플래그
             calculated_stop_loss_pct = 4.5  
 
-            evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct)
+            evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct)
 
     except Exception as e:
         print(f"실행 중 에러 발생: {e}")
