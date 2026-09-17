@@ -1,25 +1,32 @@
-name: Coin Signal Bot
+name: Upbit Signal Bot
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # 15분마다 실행 설정
+    - cron: '*/15 * * * *'  # 15분마다 실행 (설정하신 주기에 맞게)
   workflow_dispatch:
 
+permissions:
+  contents: write  # 👈 이 부분이 꼭 있어야 봇이 캐시 파일을 깃허브에 저장(Push)할 수 있습니다!
+
 jobs:
-  build:
+  run-bot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+
       - name: Install dependencies
         run: |
           pip install requests numpy
-      - name: Run script
-        run: |
-          python main.py
+
+      - name: Run Bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 main.py
