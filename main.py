@@ -1,146 +1,185 @@
-import json
 import os
+import json
 import requests
 from datetime import datetime, timedelta
-
-CACHE_FILE = "tracked_coins.json"
-MIN_ACC_TRADE_PRICE = 50_000_000_000   # 거래대금 50억 이상 (테스트용)
-MAX_ALLOWABLE_STOP_LOSS_PCT = 10.0     # 손절 폭 10% 이내
+import FinanceDataReader as fdr
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+CHAT_ID = os.environ.get("CHAT_ID")
+STATE_FILE = "active_positions.json"
 
-def send_telegram_message(text):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("텔레그램 토큰 또는 챗 ID가 설정되지 않았습니다.")
-        return
+def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
+    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": True}
     try:
-        requests.post(url, json=payload)
+        requests.post(url, data=payload)
     except Exception as e:
-        print(f"텔레그램 전송 에러: {e}")
+        print(f"텔레그램 전송 실패: {e}")
 
-def load_cache():
-    if not os.path.exists(CACHE_FILE):
-        return {}
-    try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-def save_cache(cache):
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f, ensure_ascii=False, indent=4)
-
-def get_market_names():
-    """업비트에서 코인 한글 명칭 매핑 정보 가져오기"""
-    try:
-        url = "https://api.upbit.com/v1/market/all"
-        res = requests.get(url).json()
-        return {item['market']: item['korean_name'] for item in res if item['market'].startswith('KRW-')}
-    except Exception:
-        return {}
-
-def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct):
-    print(f"[{korean_name}({ticker})] 검토 중... 대금: {acc_trade_price/100000000:,.1f}억")
-
-    if acc_trade_price < MIN_ACC_TRADE_PRICE:
-        return
-
-    if calculated_stop_loss_pct > MAX_ALLOWABLE_STOP_LOSS_PCT:
-        return
-
-    if not volume_spike_flag:
-        return
-
-    # 가격 산출
-    stop_loss = current_price * (1 - (calculated_stop_loss_pct / 100))
-    target_1 = current_price * 1.03  # +3.0%
-    target_2 = current_price * 1.06  # +6.0%
-    target_3 = current_price * 1.09  # +9.0%
-
-    # [스마트 트래킹 검증 강화] 중복 알림 차단 로직
-    cache = load_cache()
-    now = datetime.now()
-    
-    if ticker in cache:
-        prev_target_1 = cache[ticker].get("target_1", 0)
-        last_alert_time_str = cache[ticker].get("last_alert", "")
-        
-        # 1) 최근 4시간 이내에 알림 이력이 있다면 무조건 스킵 (쿨타임)
-        if last_alert_time_str:
+def load_positions():
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
             try:
-                last_alert_time = datetime.fromisoformat(last_alert_time_str)
-                if now - last_alert_time < timedelta(hours=4):
-                    print(f" -> [스킵] 최근 4시간 내 알림 이력 존재 ({korean_name})")
-                    return
-            except Exception:
-                pass
+                return json.load(f)
+            except:
+                return {}
+    return {}
 
-        # 2) 가격이 이전 TP1보다 최소 1.5% 이상 더 치고 올라가지 않았으면 횡보 중으로 판단하여 스킵
-        if current_price < prev_target_1 * 1.015:
-            print(f" -> [스킵] 상향 파동 미흡 - 이전 TP1 근처 횡보 중 ({korean_name})")
-            return
-        else:
-            print(f"🔥 [상향 파동 연장] {korean_name} - 추가 슈팅 포착!")
+def save_positions(positions):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(positions, f, ensure_ascii=False, indent=4)
 
-    # [전문가형 하이엔드 메시지 포맷]
-    message = (
-        f"🚀 **[QUANT PROFESSIONAL SIGNAL]**\n"
-        f"────────────────────────\n"
-        f"▪ **자산명**: `{korean_name} ({ticker})`\n"
-        f"▪ **현재가**: `{current_price:,.1f} KRW`\n"
-        f"▪ **24H 거래대금**: `{acc_trade_price / 100_000_000:,.1f}억 원`\n\n"
-        f"🎯 **TARGET LEVELS (분할 익절 구간)**\n"
-        f"  ├ **TP1**: `{target_1:,.1f}원` (+3.0%)\n"
-        f"  ├ **TP2**: `{target_2:,.1f}원` (+6.0%)\n"
-        f"  └ **TP3**: `{target_3:,.1f}원` (+9.0%)\n\n"
-        f"🛡️ **RISK MANAGEMENT (리스크 관리)**\n"
-        f"  ├ **방어 손절가 (SL)**: `{stop_loss:,.1f}원` (-{calculated_stop_loss_pct}%)\n"
-        f"  └ **기대 손익비**: `1 : 2.0 이상 (고효율 구간)`\n"
-        f"────────────────────────\n"
-        f"💡 *Strategy: 직전 저항선 돌파 및 실시간 볼륨 유입 포착*"
-    )
+def monitor_positions(start_date):
+    positions = load_positions()
+    if not positions:
+        print("현재 추적 중인 보유 포지션이 없습니다.")
+        return
+
+    updated_positions = {}
+    for ticker, pos in positions.items():
+        try:
+            df = fdr.DataReader(ticker, start_date)
+            if len(df) == 0:
+                updated_positions[ticker] = pos
+                continue
+                
+            latest = df.iloc[-1]
+            high_price = latest['High']
+            low_price = latest['Low']
+            
+            name = pos['name']
+            tp1 = pos['target_1']
+            tp2 = pos['target_2']
+            sl = pos['stop_loss']
+            
+            # SL(손절가) 체크
+            if low_price <= sl:
+                msg = f"🛡️ <b>[손절가(SL) 도달]</b>\n📌 <b>{name}</b> <code>({ticker})</code>\n❌ 이탈 가격: <code>{int(sl):,}원 이하</code>"
+                send_telegram(msg)
+                continue 
+                
+            # TP2(2차 목표가) 체크
+            if high_price >= tp2:
+                msg = f"🎯 <b>[2차 목표가(TP2) 달성]</b>\n📌 <b>{name}</b> <code>({ticker})</code>\n🔥 달성 가격: <code>{int(tp2):,}원 돌파!</code>"
+                send_telegram(msg)
+                continue 
+                
+            # TP1(1차 목표가) 체크
+            if high_price >= tp1 and not pos.get('tp1_hit', False):
+                msg = f"🎯 <b>[1차 목표가(TP1) 달성]</b>\n📌 <b>{name}</b> <code>({ticker})</code>\n✨ 달성 가격: <code>{int(tp1):,}원 도달!</code>"
+                send_telegram(msg)
+                pos['tp1_hit'] = True 
+                
+            updated_positions[ticker] = pos
+        except Exception:
+            updated_positions[ticker] = pos
+
+    save_positions(updated_positions)
+
+def run_screener():
+    now = datetime.now()
+    start_date = (now - timedelta(days=60)).strftime('%Y-%m-%d')
     
-    print(f"🔥 [알림 전송 완료] {korean_name}({ticker})")
-    send_telegram_message(message)
+    print("=== 보유 포지션 모니터링 수행 ===")
+    monitor_positions(start_date)
 
-    # 캐시 갱신 (현재가 기준 목표가 및 발송 시각 저장)
-    cache[ticker] = {
-        "last_price": current_price,
-        "target_1": target_1,
-        "last_alert": now.isoformat()
-    }
-    save_cache(cache)
+    print("=== [종가 및 시초가 전략] 신규 종목 스크리닝 시작 ===")
+    try:
+        df_krx = fdr.StockListing('KRX')
+        top_300 = df_krx.sort_values(by='Amount', ascending=False).head(300)
+    except Exception as e:
+        print(f"KRX 종목 리스트 불러오기 실패: {e}")
+        return
+
+    closing_signals = []  
+    morning_signals = []  
+    new_positions = load_positions() 
+
+    for _, row in top_300.iterrows():
+        ticker = row['Code']
+        name = row['Name']
+        
+        try:
+            df = fdr.DataReader(ticker, start_date)
+            if len(df) < 20:
+                continue
+            
+            latest = df.iloc[-1]
+            prev = df.iloc[-2]
+            df_20 = df.iloc[-20:]
+            
+            close = latest['Close'] 
+            open_p = latest['Open']
+            high = latest['High']
+            volume = latest['Volume']
+            avg_vol_20 = df_20['Volume'].mean()
+            
+            candle_body = close - open_p
+            if candle_body <= 0:
+                continue
+            if (close - prev['Close']) / prev['Close'] < 0.025:
+                continue
+            if (high - close) > candle_body * 0.15:
+                continue
+            if volume < prev['Volume'] * 2.5 or volume < avg_vol_20 * 2.0:
+                continue
+                
+            ma5 = df['Close'].rolling(5).mean().iloc[-1]
+            ma20 = df['Close'].rolling(20).mean().iloc[-1]
+            if close < ma5 or close < ma20:
+                continue
+                
+            stop_loss = round(close * 0.96, -1)
+            high_20 = df_20['High'].max()
+            raw_target_1 = high_20 if high_20 > close * 1.02 else close * 1.04
+            target_1 = round(raw_target_1, -1)
+            target_2 = round(target_1 * 1.05, -1)
+            
+            chart_link = f"https://finance.naver.com/item/main.naver?code={ticker}"
+            
+            # 1. 종가매매 알림 (진입가, 손절가, 목표가 포함)
+            closing_msg = (
+                f"📌 <b>{name}</b> <code>({ticker})</code>\n"
+                f"💰 <b>진입가(종가):</b> <code>{int(close):,}원</code>\n"
+                f"🛡️ <b>손절가(SL):</b> <code>{int(stop_loss):,}원</code>\n"
+                f"🎯 <b>1차 목표가(TP1):</b> <code>{int(target_1):,}원</code>\n"
+                f"🎯 <b>2차 목표가(TP2):</b> <code>{int(target_2):,}원</code>\n"
+                f"📈 <a href='{chart_link}'>네이버 차트</a>"
+            )
+            closing_signals.append(closing_msg)
+            
+            # 2. 시초가매매 알림
+            morning_msg = (
+                f"📌 <b>{name}</b> <code>({ticker})</code>\n"
+                f"💰 <b>기준가(오늘종가):</b> <code>{int(close):,}원</code>\n"
+                f"🎯 <b>1차 목표가(TP1):</b> <code>{int(target_1):,}원</code>\n"
+                f"🎯 <b>2차 목표가(TP2):</b> <code>{int(target_2):,}원</code>\n"
+                f"💡 <i>내일 아침 시초가 갭 공략</i>"
+            )
+            morning_signals.append(morning_msg)
+            
+            new_positions[ticker] = {
+                "name": name,
+                "target_1": int(target_1),
+                "target_2": int(target_2),
+                "stop_loss": int(stop_loss),
+                "tp1_hit": False
+            }
+        except Exception:
+            continue
+
+    if closing_signals:
+        closing_text = "🚨 <b>[1] 오늘의 종가매매 (장 마감 전 진입)</b>\n━━━━━━━━━━━━━━━━━━━\n\n" + "\n\n".join(closing_signals[:5])
+        send_telegram(closing_text)
+        
+        morning_text = "🌅 <b>[2] 내일 아침 시초가 매매 (오전 갭 공략)</b>\n━━━━━━━━━━━━━━━━━━━\n\n" + "\n\n".join(morning_signals[:5])
+        send_telegram(morning_text)
+    else:
+        send_telegram("⚠️ 오늘 조건에 부합하는 종가/시초가 매매 종목이 없습니다.")
+
+    save_positions(new_positions)
+    send_telegram("🏁 <b>[국장 자동화] 스크리닝 및 포지션 갱신 완료!</b>")
 
 if __name__ == "__main__":
-    print("업비트 하이엔드 퀀트 스캐너 가동 시작...")
-    try:
-        # 코인 한글 명칭 사전 로드
-        market_names = get_market_names()
+    run_screener()
 
-        market_url = "https://api.upbit.com/v1/market/all"
-        markets = [item['market'] for item in requests.get(market_url).json() if item['market'].startswith('KRW-')]
-        
-        ticker_url = f"https://api.upbit.com/v1/ticker?markets={','.join(markets)}"
-        ticker_data = requests.get(ticker_url).json()
-
-        for data in ticker_data:
-            ticker = data['market']
-            korean_name = market_names.get(ticker, ticker)  # 한글명 매칭 (없으면 티커 그대로)
-            current_price = data['trade_price']
-            acc_trade_price = data['acc_trade_price_24h']
-
-            volume_spike_flag = True  # 테스트 플래그
-            calculated_stop_loss_pct = 4.5  
-
-            evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct)
-
-    except Exception as e:
-        print(f"실행 중 에러 발생: {e}")
