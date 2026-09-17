@@ -2,11 +2,10 @@ import json
 import os
 from datetime import datetime, timedelta
 
-# 🛠️ 실전 매매에 맞게 기준을 살짝 유연하게 조정
 CACHE_FILE = "tracked_coins.json"
-MIN_ACC_TRADE_PRICE = 100_000_000_000  # 1. 최소 거래대금 100억 원 이상 (중·대형 위주)
-MAX_ALLOWABLE_STOP_LOSS_PCT = 7.0      # 2. 최대 허용 손절 폭 7% 이내 (변동성 고려)
-COOLDOWN_HOURS = 24                    # 3. 동일 종목 24시간 중복 방지 쿨타임
+MIN_ACC_TRADE_PRICE = 50_000_000_000   # 테스트를 위해 거래대금 기준을 50억 원으로 일시 완화
+MAX_ALLOWABLE_STOP_LOSS_PCT = 10.0     # 손절 폭 허용치 10%로 완화
+COOLDOWN_HOURS = 1                     # 쿨타임도 일단 1시간으로 단축 테스트
 
 def load_cache():
     if not os.path.exists(CACHE_FILE):
@@ -22,36 +21,40 @@ def save_cache(cache):
         json.dump(cache, f, ensure_ascii=False, indent=4)
 
 def evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct):
-    # [조건 1] 100억 미만 저대금 종목 차단
+    print(f"[{ticker}] 검토 중... 대금: {acc_trade_price/100000000:,.1f}억, 손절폭: {calculated_stop_loss_pct}%")
+
+    # [조건 1] 거래대금 필터
     if acc_trade_price < MIN_ACC_TRADE_PRICE:
+        print(f" -> [스킵] 거래대금 부족 ({acc_trade_price/100000000:,.1f}억 < 50억)")
         return
 
-    # [조건 2] 손절 폭이 7%를 초과하면 차단
+    # [조건 2] 손절 폭 필터
     if calculated_stop_loss_pct > MAX_ALLOWABLE_STOP_LOSS_PCT:
+        print(f" -> [스킵] 손절 폭 너무 넓음 ({calculated_stop_loss_pct}%)")
         return
 
-    # [조건 3] 거래량 폭발 조건 미충족 시 차단
+    # [조건 3] 거래량 폭발 플래그
     if not volume_spike_flag:
+        print(f" -> [스킵] 거래량 폭발 조건 미충족")
         return
 
-    # [조건 4] 24시간 재알림 쿨타임 검증
+    # [조건 4] 쿨타임 검증
     cache = load_cache()
     now = datetime.now()
-    
     if ticker in cache:
         last_alert_str = cache[ticker].get("last_alert")
         if last_alert_str:
             last_alert_time = datetime.fromisoformat(last_alert_str)
             if now - last_alert_time < timedelta(hours=COOLDOWN_HOURS):
+                print(f" -> [스킵] 쿨타임 중 (최근 알림: {last_alert_str})")
                 return
 
-    # [가격 산출] 손절가 및 1·2·3차 목표가 계산
+    # 가격 산출
     stop_loss = current_price * (1 - (calculated_stop_loss_pct / 100))
-    target_1 = current_price * 1.03  # 1차 목표 (+3.0%)
-    target_2 = current_price * 1.06  # 2차 목표 (+6.0%)
-    target_3 = current_price * 1.09  # 3차 목표 (+9.0%)
+    target_1 = current_price * 1.03
+    target_2 = current_price * 1.06
+    target_3 = current_price * 1.09
 
-    # [전문가형 메시지 포맷]
     message = (
         f"📊 **[QUANT SIGNAL] 현물 마켓 트렌드 포착**\n"
         f"────────────────────────\n"
@@ -65,13 +68,13 @@ def evaluate_and_send_signal(ticker, current_price, acc_trade_price, volume_spik
         f"🛡️ **RISK MANAGEMENT (방어)**\n"
         f"  └ 타이트 손절가: `{stop_loss:,.1f}원` (-{calculated_stop_loss_pct}%)\n"
         f"────────────────────────\n"
-        f"💡 *Notice: 100억 이상 유동성 검증 및 리스크 필터 적용완료*"
+        f"💡 *Notice: 디버깅 모드 테스트 중*"
     )
     
-    # 텔레그램 전송 함수 (사용 중이신 전송 함수로 연동해주세요. 예: send_telegram_message(message))
+    print(f"🔥 [알림 전송 성공!] {ticker} 신호 발송 준비 완료")
+    # 실제 전송 함수 연동 시 아래 주석 해제
     # send_telegram_message(message)
-    print(message)  # 액션 로그 출력용
+    print(message)
 
-    # 쿨타임 저장
     cache[ticker] = {"last_alert": now.isoformat()}
     save_cache(cache)
