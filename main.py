@@ -3,6 +3,7 @@ import requests
 import numpy as np
 import json
 import time
+import subprocess
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -80,8 +81,25 @@ def get_24h_trade_prices(markets):
     except:
         return {}
 
+def git_commit_and_push():
+    """알림 기록(json)을 깃허브 레포지토리에 자동으로 저장하는 함수"""
+    try:
+        subprocess.run(["git", "config", "--global", "user.name", "github-actions[bot]"], check=True)
+        subprocess.run(["git", "config", "--global", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
+        subprocess.run(["git", "add", CACHE_FILE], check=True)
+        # 커밋할 내용이 있을 때만 푸시 진행
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True)
+        if status.stdout.strip():
+            subprocess.run(["git", "commit", "-m", "Update tracked coins cache [skip ci]"], check=True)
+            subprocess.run(["git", "push"], check=True)
+            print("🔄 깃허브 캐시 동기화(Push) 완료!")
+        else:
+            print("📌 변경된 캐시 내용이 없습니다.")
+    except Exception as e:
+        print(f"⚠️ 깃허브 자동 푸시 중 에러 발생: {e}")
+
 if __name__ == "__main__":
-    print("🌐 [고점 방어 +3% 타겟팅 실시간 스캐너] 가동 중...")
+    print("🌐 [깃허브 메모리 연동형 +3% 타겟팅 스캐너] 가동 중...")
     
     market_dict = get_upbit_market_details()
     market_list = list(market_dict.keys())
@@ -91,7 +109,7 @@ if __name__ == "__main__":
     tracked_cache = load_cache()
     current_time = time.time()
     
-    # 📌 캐시 유지 시간을 24시간(86400초)으로 늘려 동일 종목 반복 알림 철저 차단
+    # 24시간(86400초) 지난 기록은 자동 삭제
     tracked_cache = {k: v for k, v in tracked_cache.items() if current_time - v.get('time', 0) < 86400}
     notifications = []
 
@@ -111,7 +129,6 @@ if __name__ == "__main__":
             closes = np.array([x['trade_price'] for x in res])
             highs = np.array([x['high_price'] for x in res])
             lows = np.array([x['low_price'] for x in res])
-            volumes = np.array([x['candle_acc_trade_volume'] for x in res])
             
             current_price = closes[-1]
             current_open = opens[-1]
@@ -123,12 +140,12 @@ if __name__ == "__main__":
             if market in tracked_cache:
                 continue
 
-            # 🛡️ [방어선 1] 이미 고점을 찍고 윗꼬리를 길게 달며 밀려 내려오는 음봉/약세 캔들 차단
+            # 고점 윗꼬리 이탈 방어 필터
             high_price_15m = highs[-1]
             if current_price < (high_price_15m * 0.985): 
                 continue
 
-            # 🛡️ [방어선 2] 당일 너무 과도하게 폭등한 자리(설거지 및 추격매수 위험 구간) 배제
+            # 당일 과열 폭등 구간(설거지) 필터
             if change_rate >= 15.0: 
                 continue
 
@@ -143,7 +160,6 @@ if __name__ == "__main__":
                 
                 tp1_pct = ((tp1 - current_price) / current_price) * 100
                 
-                # 1차 목표가 +3% 미만이면 제외
                 if tp1_pct < 3.0:
                     continue
 
@@ -155,7 +171,7 @@ if __name__ == "__main__":
                 vol_ratio = 1.5 
                 dynamic_duration = calculate_dynamic_duration(target_pct, vol_ratio, change_rate)
                 
-                tracked_cache[market] = {"time": current_time, "tp1": tp1, "tp2": tp2, "tp3": tp3, "sl": sl, "reached_targets": []}
+                tracked_cache[market] = {"time": current_time, "tp1": tp1, "tp2": tp2, "tp3": tp3, "sl": sl}
                 
                 new_msg = (
                     f"🚀 **[고수익 슈팅 포착 (+3% 이상)]** 🚀\n\n"
@@ -180,4 +196,8 @@ if __name__ == "__main__":
         send_telegram(msg)
 
     save_cache(tracked_cache)
-    print("고점 방어 스캔 완료.")
+    
+    # 깃허브에 기록 동기화 실행
+    git_commit_and_push()
+    print("스캔 완료.")
+
