@@ -1,0 +1,152 @@
+{
+    "KRW-GEOD": {
+        "last_price": 442.0,
+        "target_1": 455.26,
+        "last_alert": "2026-09-18T04:17:19.279434"
+    },
+    "KRW-LSK": {
+        "last_price": 430.0,
+        "target_1": 442.90000000000003,
+        "last_alert": "2026-09-18T04:17:19.787764"
+    },
+    "KRW-0G": {
+        "last_price": 289.0,
+        "target_1": 297.67,
+        "last_alert": "2026-09-18T04:17:20.286418"
+    },
+    "KRW-TRAC": {
+        "last_price": 448.0,
+        "target_1": 461.44,
+        "last_alert": "2026-09-18T04:17:20.804276"
+    },
+    "KRW-META2": {
+        "last_price": 6955.0,
+        "target_1": 7163.650000000001,
+        "last_alert": "2026-09-18T04:17:21.336071"
+    },
+    "KRW-USDT": {
+        "last_price": 1377.0,
+        "target_1": 1418.31,
+        "last_alert": "2026-09-18T04:17:21.847454"
+    },
+    "KRW-FOLD": {
+        "last_price": 85.4,
+        "target_1": 87.962,
+        "last_alert": "2026-09-18T04:17:25.526388"
+    },
+    "KRW-QUID": {
+        "last_price": 86.0,
+        "target_1": 88.58,
+        "last_alert": "2026-09-18T04:17:26.063038"
+    },
+    "KRW-UNI": {
+        "last_price": 11850.0,
+        "target_1": 12205.5,
+        "last_alert": "2026-09-18T04:17:26.549466"
+    },
+    "KRW-DOGE": {
+        "last_price": 116.0,
+        "target_1": 119.48,
+        "last_alert": "2026-09-18T04:17:27.033623"
+    },
+    "KRW-WLD": {
+        "last_price": 585.0,
+        "target_1": 602.5500000000001,
+        "last_alert": "2026-09-18T04:17:27.576257"
+    },
+    "KRW-JPYC": {
+        "last_price": 8.93,
+        "target_1": 9.1979,
+        "last_alert": "2026-09-18T04:17:31.261118"
+    },
+    "KRW-TRUMP": {
+        "last_price": 2824.0,
+        "target_1": 2908.7200000000003,
+        "last_alert": "2026-09-18T04:17:31.777354"
+    },
+    "KRW-APT": {
+        "last_price": 923.0,
+        "target_1": 950.69,
+        "last_alert": "2026-09-18T04:17:32.297184"
+    },
+    "KRW-ETH": {
+        "last_price": 3407000.0,
+        "target_1": 3509210.0,
+        "last_alert": "2026-09-18T04:17:32.812004"
+    },
+    "KRW-NEAR": {
+        "last_price": 4822.0,
+        "target_1": 4966.66,
+        "last_alert": "2026-09-18T04:17:33.299135"
+    },
+    "KRW-PYUSD": {
+        "last_price": 1376.0,
+        "target_1": 1417.28,
+        "last_alert": "2026-09-18T04:17:37.013423"
+    },
+    "KRW-ARB": {
+        "last_price": 312.0,
+        "target_1": 321.36,
+        "last_alert": "2026-09-18T04:17:37.518281"
+    },
+    "KRW-XLM": {
+        "last_price": 258.0,
+        "target_1": 265.74,
+        "last_alert": "2026-09-18T04:17:38.013288"
+    },
+    "KRW-XRP": {
+        "last_price": 1817.0,
+        "target_1": 1871.51,
+        "last_alert": "2026-09-18T04:17:38.513272"
+    },
+    "KRW-ENA": {
+        "last_price": 225.0,
+        "target_1": 231.75,
+        "last_alert": "2026-09-18T04:17:39.035427"
+    },
+    "KRW-ONDO": {
+        "last_price": 534.0,
+        "target_1": 550.02,
+        "last_alert": "2026-09-18T04:17:39.497861"
+    },
+    "KRW-ADA": {
+        "last_price": 294.0,
+        "target_1": 302.82,
+        "last_alert": "2026-09-18T04:17:39.973776"
+    },
+    "KRW-DOS": {
+        "last_price": 278.0,
+        "target_1": 286.34000000000003,
+        "last_alert": "2026-09-18T04:17:40.416294"
+    },
+    "KRW-SOL": {
+        "last_price": 144200.0,
+        "target_1": 148526.0,
+        "last_alert": "2026-09-18T04:17:40.859429"
+    },
+    "KRW-DRV": {
+        "last_price": 324.0,
+        "target_1": 333.72,
+        "last_alert": "2026-09-18T04:17:41.470240"
+    },
+    "KRW-FLOCK": {
+        "last_price": 96.4,
+        "target_1": 99.292,
+        "last_alert": "2026-09-18T04:17:42.413181"
+    },
+    "KRW-SUI": {
+        "last_price": 1074.0,
+        "target_1": 1106.22,
+        "last_alert": "2026-09-18T04:17:42.871041"
+    },
+    "KRW-BTC": {
+        "last_price": 106445000.0,
+        "target_1": 109638350.0,
+        "last_alert": "2026-09-18T04:17:43.340256"
+    },
+    "KRW-BABY": {
+        "last_price": 15.4,
+        "target_1": 15.862,
+        "last_alert": "2026-09-18T04:17:43.797635"
+    }
+}
