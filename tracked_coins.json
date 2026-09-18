@@ -1,8 +1,8 @@
 {
     "KRW-LSK": {
-        "last_price": 432.0,
-        "target_1": 444.96000000000004,
-        "last_alert": "2026-09-17T13:05:58.056653"
+        "last_price": 459.0,
+        "target_1": 472.77000000000004,
+        "last_alert": "2026-09-18T00:23:13.451112"
     },
     "KRW-USDT": {
         "last_price": 1376.0,
@@ -10,9 +10,9 @@
         "last_alert": "2026-09-17T13:05:58.570085"
     },
     "KRW-FOLD": {
-        "last_price": 87.6,
-        "target_1": 90.228,
-        "last_alert": "2026-09-17T13:05:59.125131"
+        "last_price": 93.0,
+        "target_1": 95.79,
+        "last_alert": "2026-09-18T00:23:13.971651"
     },
     "KRW-JPYC": {
         "last_price": 20.6,
