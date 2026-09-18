@@ -4,7 +4,7 @@ import requests
 from datetime import datetime, timedelta
 
 CACHE_FILE = "tracked_coins.json"
-MIN_ACC_TRADE_PRICE = 10_000_000_000   # 거래대금 기준 완화 (500억 -> 100억 원)
+MIN_ACC_TRADE_PRICE = 10_000_000_000   # 거래대금 100억 이상
 MAX_ALLOWABLE_STOP_LOSS_PCT = 10.0     # 손절 폭 10% 이내
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -46,6 +46,17 @@ def get_market_names():
         return {item['market']: item['korean_name'] for item in res if item['market'].startswith('KRW-')}
     except Exception:
         return {}
+
+def format_price(price):
+    """가격대에 맞춰 소수점 자릿수를 동적으로 변환하는 함수"""
+    if price >= 100:
+        return f"{price:,.1f}"
+    elif price >= 1:
+        return f"{price:,.2f}"
+    elif price >= 0.1:
+        return f"{price:,.3f}"
+    else:
+        return f"{price:,.4f}"
 
 def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct):
     print(f"[{korean_name}({ticker})] 검토 중... 대금: {acc_trade_price/100000000:,.1f}억")
@@ -90,19 +101,26 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
         else:
             print(f"🔥 [상향 파동 연장] {korean_name} - 추가 슈팅 포착!")
 
+    # 동적 가격 포맷 적용
+    curr_str = format_price(current_price)
+    tp1_str = format_price(target_1)
+    tp2_str = format_price(target_2)
+    tp3_str = format_price(target_3)
+    sl_str = format_price(stop_loss)
+
     # [전문가형 하이엔드 메시지 포맷]
     message = (
         f"🚀 **[QUANT PROFESSIONAL SIGNAL]**\n"
         f"────────────────────────\n"
         f"▪ **자산명**: `{korean_name} ({ticker})`\n"
-        f"▪ **현재가**: `{current_price:,.1f} KRW`\n"
+        f"▪ **현재가**: `{curr_str} KRW`\n"
         f"▪ **24H 거래대금**: `{acc_trade_price / 100_000_000:,.1f}억 원`\n\n"
         f"🎯 **TARGET LEVELS (분할 익절 구간)**\n"
-        f"  ├ **TP1**: `{target_1:,.1f}원` (+3.0%)\n"
-        f"  ├ **TP2**: `{target_2:,.1f}원` (+6.0%)\n"
-        f"  └ **TP3**: `{target_3:,.1f}원` (+9.0%)\n\n"
+        f"  ├ **TP1**: `{tp1_str}원` (+3.0%)\n"
+        f"  ├ **TP2**: `{tp2_str}원` (+6.0%)\n"
+        f"  └ **TP3**: `{tp3_str}원` (+9.0%)\n\n"
         f"🛡️ **RISK MANAGEMENT (리스크 관리)**\n"
-        f"  ├ **방어 손절가 (SL)**: `{stop_loss:,.1f}원` (-{calculated_stop_loss_pct}%)\n"
+        f"  ├ **방어 손절가 (SL)**: `{sl_str}원` (-{calculated_stop_loss_pct}%)\n"
         f"  └ **기대 손익비**: `1 : 2.0 이상 (고효율 구간)`\n"
         f"────────────────────────\n"
         f"💡 *Strategy: 직전 저항선 돌파 및 실시간 볼륨 유입 포착*"
