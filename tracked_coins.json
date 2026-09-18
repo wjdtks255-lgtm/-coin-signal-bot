@@ -5,9 +5,9 @@
         "last_alert": "2026-09-18T04:17:19.279434"
     },
     "KRW-LSK": {
-        "last_price": 430.0,
-        "target_1": 442.90000000000003,
-        "last_alert": "2026-09-18T04:17:19.787764"
+        "last_price": 454.0,
+        "target_1": 467.62,
+        "last_alert": "2026-09-18T14:16:51.837149"
     },
     "KRW-0G": {
         "last_price": 289.0,
@@ -125,9 +125,9 @@
         "last_alert": "2026-09-18T04:17:40.859429"
     },
     "KRW-DRV": {
-        "last_price": 324.0,
-        "target_1": 333.72,
-        "last_alert": "2026-09-18T04:17:41.470240"
+        "last_price": 348.0,
+        "target_1": 358.44,
+        "last_alert": "2026-09-18T14:16:52.453940"
     },
     "KRW-FLOCK": {
         "last_price": 101.0,
