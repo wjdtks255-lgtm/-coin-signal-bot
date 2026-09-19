@@ -105,9 +105,9 @@
         "last_alert": "2026-09-19T01:14:28.744686"
     },
     "KRW-ONDO": {
-        "last_price": 534.0,
-        "target_1": 550.02,
-        "last_alert": "2026-09-18T04:17:39.497861"
+        "last_price": 563.0,
+        "target_1": 579.89,
+        "last_alert": "2026-09-19T02:16:14.552624"
     },
     "KRW-ADA": {
         "last_price": 308.0,
@@ -218,5 +218,15 @@
         "last_price": 5.7,
         "target_1": 5.871,
         "last_alert": "2026-09-19T00:46:55.953704"
+    },
+    "KRW-AVAX": {
+        "last_price": 11820.0,
+        "target_1": 12174.6,
+        "last_alert": "2026-09-19T02:16:13.996118"
+    },
+    "KRW-QKC": {
+        "last_price": 3.95,
+        "target_1": 4.0685,
+        "last_alert": "2026-09-19T02:16:15.089270"
     }
 }
