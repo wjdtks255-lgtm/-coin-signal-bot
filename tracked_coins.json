@@ -135,9 +135,9 @@
         "last_alert": "2026-09-18T10:43:01.663863"
     },
     "KRW-SUI": {
-        "last_price": 1127.0,
-        "target_1": 1160.81,
-        "last_alert": "2026-09-19T00:22:49.010613"
+        "last_price": 1181.0,
+        "target_1": 1216.43,
+        "last_alert": "2026-09-19T11:40:46.267049"
     },
     "KRW-BTC": {
         "last_price": 111631000.0,
@@ -200,9 +200,9 @@
         "last_alert": "2026-09-19T05:14:47.606066"
     },
     "KRW-ZAMA": {
-        "last_price": 87.0,
-        "target_1": 89.61,
-        "last_alert": "2026-09-19T07:14:49.881636"
+        "last_price": 105.0,
+        "target_1": 108.15,
+        "last_alert": "2026-09-19T11:40:45.519867"
     },
     "KRW-SKY": {
         "last_price": 96.4,
