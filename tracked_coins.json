@@ -100,9 +100,9 @@
         "last_alert": "2026-09-18T15:16:11.457266"
     },
     "KRW-ENA": {
-        "last_price": 250.0,
-        "target_1": 257.5,
-        "last_alert": "2026-09-19T07:14:47.946641"
+        "last_price": 268.0,
+        "target_1": 276.04,
+        "last_alert": "2026-09-19T12:20:20.219932"
     },
     "KRW-ONDO": {
         "last_price": 563.0,
@@ -278,5 +278,15 @@
         "last_price": 7315.0,
         "target_1": 7534.45,
         "last_alert": "2026-09-19T10:15:56.289178"
+    },
+    "KRW-CAP": {
+        "last_price": 97.3,
+        "target_1": 100.219,
+        "last_alert": "2026-09-19T12:20:19.596093"
+    },
+    "KRW-STX": {
+        "last_price": 439.0,
+        "target_1": 452.17,
+        "last_alert": "2026-09-19T12:20:20.775185"
     }
 }
