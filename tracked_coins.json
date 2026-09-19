@@ -243,5 +243,15 @@
         "last_price": 3798.0,
         "target_1": 3911.94,
         "last_alert": "2026-09-19T05:14:48.837562"
+    },
+    "KRW-ESP": {
+        "last_price": 152.0,
+        "target_1": 156.56,
+        "last_alert": "2026-09-19T06:20:13.869073"
+    },
+    "KRW-EDGE": {
+        "last_price": 171.0,
+        "target_1": 176.13,
+        "last_alert": "2026-09-19T06:20:14.395783"
     }
 }
