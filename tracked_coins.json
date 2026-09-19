@@ -220,9 +220,9 @@
         "last_alert": "2026-09-19T00:46:55.953704"
     },
     "KRW-AVAX": {
-        "last_price": 11820.0,
-        "target_1": 12174.6,
-        "last_alert": "2026-09-19T02:16:13.996118"
+        "last_price": 12550.0,
+        "target_1": 12926.5,
+        "last_alert": "2026-09-19T10:41:35.017017"
     },
     "KRW-QKC": {
         "last_price": 3.95,
@@ -230,9 +230,9 @@
         "last_alert": "2026-09-19T02:16:15.089270"
     },
     "KRW-BLAST": {
-        "last_price": 0.553,
-        "target_1": 0.56959,
-        "last_alert": "2026-09-19T02:42:17.173078"
+        "last_price": 0.655,
+        "target_1": 0.6746500000000001,
+        "last_alert": "2026-09-19T10:41:34.404308"
     },
     "KRW-CPOOL": {
         "last_price": 41.5,
