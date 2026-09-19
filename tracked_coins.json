@@ -195,9 +195,9 @@
         "last_alert": "2026-09-18T22:16:02.758681"
     },
     "KRW-PIEVERSE": {
-        "last_price": 2295.0,
-        "target_1": 2363.85,
-        "last_alert": "2026-09-18T20:16:12.280270"
+        "last_price": 2405.0,
+        "target_1": 2477.15,
+        "last_alert": "2026-09-19T05:14:47.606066"
     },
     "KRW-ZAMA": {
         "last_price": 81.4,
@@ -233,5 +233,15 @@
         "last_price": 0.553,
         "target_1": 0.56959,
         "last_alert": "2026-09-19T02:42:17.173078"
+    },
+    "KRW-CPOOL": {
+        "last_price": 41.5,
+        "target_1": 42.745000000000005,
+        "last_alert": "2026-09-19T05:14:48.280847"
+    },
+    "KRW-MORPHO": {
+        "last_price": 3798.0,
+        "target_1": 3911.94,
+        "last_alert": "2026-09-19T05:14:48.837562"
     }
 }
