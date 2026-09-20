@@ -1,14 +1,16 @@
 import json
 import os
 import requests
+import numpy as np
 from datetime import datetime, timedelta
 
 CACHE_FILE = "tracked_coins.json"
 MIN_ACC_TRADE_PRICE = 10_000_000_000   # 거래대금 100억 이상
-MAX_ALLOWABLE_STOP_LOSS_PCT = 10.0     # 손절 폭 10% 이내
+MAX_ALLOWABLE_STOP_LOSS_PCT = 10.0     # 최대 허용 손절 폭 10%
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
 
 def send_telegram_message(text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -21,9 +23,11 @@ def send_telegram_message(text):
         "parse_mode": "Markdown"
     }
     try:
-        requests.post(url, json=payload)
+        res = requests.post(url, json=payload, timeout=10)
+        res.raise_for_status()
     except Exception as e:
         print(f"텔레그램 전송 에러: {e}")
+
 
 def load_cache():
     if not os.path.exists(CACHE_FILE):
@@ -34,102 +38,258 @@ def load_cache():
     except Exception:
         return {}
 
+
 def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=4)
 
+
 def get_market_names():
-    """업비트에서 코인 한글 명칭 매핑 정보 가져오기"""
     try:
         url = "https://api.upbit.com/v1/market/all"
-        res = requests.get(url).json()
+        res = requests.get(url, timeout=10).json()
         return {item['market']: item['korean_name'] for item in res if item['market'].startswith('KRW-')}
-    except Exception:
+    except Exception as e:
+        print(f"마켓 목록 조회 실패: {e}")
         return {}
 
-def format_price(price):
-    """가격대에 맞춰 소수점 자릿수를 동적으로 변환하는 함수"""
-    if price >= 100:
-        return f"{price:,.1f}"
+
+def round_upbit_tick(price):
+    """업비트 KRW 마켓 호가 단위(Tick Size) 정밀 적용"""
+    if price >= 2_000_000:
+        tick = 1000
+    elif price >= 1_000_000:
+        tick = 500
+    elif price >= 500_000:
+        tick = 100
+    elif price >= 100_000:
+        tick = 50
+    elif price >= 10_000:
+        tick = 10
+    elif price >= 1_000:
+        tick = 1
+    elif price >= 100:
+        tick = 0.1
+    elif price >= 10:
+        tick = 0.01
     elif price >= 1:
-        return f"{price:,.2f}"
+        tick = 0.001
     elif price >= 0.1:
-        return f"{price:,.3f}"
+        tick = 0.0001
+    elif price >= 0.01:
+        tick = 0.00001
     else:
+        tick = 0.000001
+
+    return round(round(price / tick) * tick, 8)
+
+
+def format_price(price):
+    if price >= 1000:
+        return f"{price:,.0f}"
+    elif price >= 100:
+        return f"{price:,.1f}"
+    elif price >= 10:
+        return f"{price:,.2f}"
+    elif price >= 1:
+        return f"{price:,.3f}"
+    elif price >= 0.1:
         return f"{price:,.4f}"
+    else:
+        return f"{price:,.6f}"
 
-def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct):
-    print(f"[{korean_name}({ticker})] 검토 중... 대금: {acc_trade_price/100000000:,.1f}억")
 
+def fetch_candles(market, timeframe_type="minutes", unit=60, count=50):
+    """
+    타임프레임별 업비트 캔들 수집
+    - timeframe_type: 'days' 또는 'minutes'
+    """
+    if timeframe_type == "days":
+        url = f"https://api.upbit.com/v1/candles/days?market={market}&count={count}"
+    else:
+        url = f"https://api.upbit.com/v1/candles/minutes/{unit}?market={market}&count={count}"
+
+    try:
+        res = requests.get(url, timeout=10).json()
+        if isinstance(res, list) and len(res) >= 20:
+            res.reverse()  # 과거 -> 최근 순서 정렬
+            closes = [c['trade_price'] for c in res]
+            highs = [c['high_price'] for c in res]
+            lows = [c['low_price'] for c in res]
+            volumes = [c['candle_acc_trade_volume'] for c in res]
+            return {
+                "closes": np.array(closes),
+                "highs": np.array(highs),
+                "lows": np.array(lows),
+                "volumes": np.array(volumes)
+            }
+    except Exception as e:
+        print(f"[{market}] 캔들 수집 에러 ({timeframe_type}/{unit}): {e}")
+    return None
+
+
+def analyze_multi_timeframe(ticker):
+    """
+    [멀티 타임프레임 종합 분석 함수]
+    1. 일봉(1D): 대추세 및 메이저 방향성
+    2. 4시간봉(4H): 구조적 지지/저항 및 파동 분석
+    3. 15분봉(15M): 단기 변동성 및 진입 모멘텀
+    """
+    candles_1d = fetch_candles(ticker, timeframe_type="days", count=30)
+    candles_4h = fetch_candles(ticker, timeframe_type="minutes", unit=240, count=40)
+    candles_15m = fetch_candles(ticker, timeframe_type="minutes", unit=15, count=40)
+
+    if not candles_1d or not candles_4h or not candles_15m:
+        return None
+
+    current_price = candles_15m['closes'][-1]
+    score = 0
+
+    # 1. [일봉 (1D)] 대추세 검증 (30점 만점)
+    closes_1d = candles_1d['closes']
+    ma5_1d = np.mean(closes_1d[-5:])
+    ma20_1d = np.mean(closes_1d[-20:])
+    
+    # 일봉 20일선 위에 위치
+    if current_price > ma20_1d:
+        score += 15
+    # 일봉 5일선 > 20일선 골든크로스/정배열
+    if ma5_1d >= ma20_1d:
+        score += 15
+
+    # 2. [4시간봉 (4H)] 지지/저항 및 볼린저밴드 (40점 만점)
+    closes_4h = candles_4h['closes']
+    highs_4h = candles_4h['highs']
+    lows_4h = candles_4h['lows']
+
+    ma20_4h = np.mean(closes_4h[-20:])
+    std20_4h = np.std(closes_4h[-20:])
+    bb_upper_4h = ma20_4h + (2 * std20_4h)
+    
+    swing_high_4h = np.max(highs_4h[-20:-1])
+    swing_low_4h = np.min(lows_4h[-15:])
+
+    if current_price > ma20_4h:
+        score += 20
+    if current_price >= bb_upper_4h * 0.98:  # 볼린저밴드 상단 근접/돌파 시도
+        score += 20
+
+    # 3. [15분봉 (15M)] 단기 돌파 및 모멘텀 (30점 만점)
+    closes_15m = candles_15m['closes']
+    volumes_15m = candles_15m['volumes']
+    
+    ma5_15m = np.mean(closes_15m[-5:])
+    ma20_15m = np.mean(closes_15m[-20:])
+    vol_avg_15m = np.mean(volumes_15m[-20:])
+
+    if ma5_15m > ma20_15m:
+        score += 15
+    if volumes_15m[-1] > vol_avg_15m * 1.8:  # 단기 거래량 실시간 분출
+        score += 15
+
+    # 4. [피보나치 확장 목표가 산출] (4시간봉 파동 기반)
+    wave_range = max(swing_high_4h - swing_low_4h, current_price * 0.02)
+    fib_1272 = current_price + (wave_range * 0.272)
+    fib_1618 = current_price + (wave_range * 0.618)
+
+    return {
+        "score": score,
+        "current_price": current_price,
+        "swing_low_4h": swing_low_4h,
+        "swing_high_4h": swing_high_4h,
+        "bb_upper_4h": bb_upper_4h,
+        "fib_1272": fib_1272,
+        "fib_1618": fib_1618
+    }
+
+
+def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price):
     if acc_trade_price < MIN_ACC_TRADE_PRICE:
         return
 
-    if calculated_stop_loss_pct > MAX_ALLOWABLE_STOP_LOSS_PCT:
+    # 멀티 타임프레임 종합 분석 실행
+    mtf = analyze_multi_timeframe(ticker)
+    if not mtf:
         return
 
-    if not volume_spike_flag:
+    # 컨플루언스 스코어 60점 미만이면 하락/횡보장으로 판단 후 스킵
+    if mtf["score"] < 60:
         return
 
-    # 가격 산출
-    stop_loss = current_price * (1 - (calculated_stop_loss_pct / 100))
-    target_1 = current_price * 1.03  # +3.0%
-    target_2 = current_price * 1.06  # +6.0%
-    target_3 = current_price * 1.09  # +9.0%
+    # --- [멀티 타임프레임 기반 가격 산출] ---
+    # 1. SL (손절가): 4시간봉 스윙 전저점 지지선 활용
+    raw_sl = mtf["swing_low_4h"] * 0.995
+    stop_loss = round_upbit_tick(raw_sl)
+    calculated_stop_loss_pct = ((current_price - stop_loss) / current_price) * 100
 
-    # [스마트 트래킹 검증 강화] 중복 알림 차단 로직
+    if calculated_stop_loss_pct > MAX_ALLOWABLE_STOP_LOSS_PCT or calculated_stop_loss_pct < 0.8:
+        return
+
+    # 2. TP1: 4시간봉 볼린저밴드 상단 또는 피보나치 1.272 레벨
+    raw_tp1 = max(mtf["bb_upper_4h"], mtf["fib_1272"])
+    if raw_tp1 <= current_price:
+        raw_tp1 = current_price * 1.025
+    target_1 = round_upbit_tick(raw_tp1)
+
+    # 3. TP2: 4시간봉 주요 스윙 전고점 저항선
+    raw_tp2 = max(mtf["swing_high_4h"], target_1 * 1.02)
+    target_2 = round_upbit_tick(raw_tp2)
+
+    # 4. TP3: 피보나치 1.618 확장선
+    raw_tp3 = max(mtf["fib_1618"], target_2 * 1.025)
+    target_3 = round_upbit_tick(raw_tp3)
+
+    # [스마트 트래킹 검증]
     cache = load_cache()
     now = datetime.now()
-    
+
     if ticker in cache:
         prev_target_1 = cache[ticker].get("target_1", 0)
         last_alert_time_str = cache[ticker].get("last_alert", "")
-        
-        # 1) 최근 4시간 이내에 알림 이력이 있다면 무조건 스킵 (쿨타임)
+
         if last_alert_time_str:
             try:
                 last_alert_time = datetime.fromisoformat(last_alert_time_str)
                 if now - last_alert_time < timedelta(hours=4):
-                    print(f" -> [스킵] 최근 4시간 내 알림 이력 존재 ({korean_name})")
                     return
             except Exception:
                 pass
 
-        # 2) 가격이 이전 TP1보다 최소 1.5% 이상 더 치고 올라가지 않았으면 횡보 중으로 판단하여 스킵
         if current_price < prev_target_1 * 1.015:
-            print(f" -> [스킵] 상향 파동 미흡 - 이전 TP1 근처 횡보 중 ({korean_name})")
             return
-        else:
-            print(f"🔥 [상향 파동 연장] {korean_name} - 추가 슈팅 포착!")
 
-    # 동적 가격 포맷 적용
+    # 동적 가격 포맷팅
     curr_str = format_price(current_price)
     tp1_str = format_price(target_1)
     tp2_str = format_price(target_2)
     tp3_str = format_price(target_3)
     sl_str = format_price(stop_loss)
 
-    # [전문가형 하이엔드 메시지 포맷]
+    tp1_pct = ((target_1 - current_price) / current_price) * 100
+    tp2_pct = ((target_2 - current_price) / current_price) * 100
+    tp3_pct = ((target_3 - current_price) / current_price) * 100
+
     message = (
-        f"🚀 **[QUANT PROFESSIONAL SIGNAL]**\n"
+        f"🚀 **[MULTI-TIMEFRAME QUANT SIGNAL]**\n"
         f"────────────────────────\n"
         f"▪ **자산명**: `{korean_name} ({ticker})`\n"
         f"▪ **현재가**: `{curr_str} KRW`\n"
-        f"▪ **24H 거래대금**: `{acc_trade_price / 100_000_000:,.1f}억 원`\n\n"
-        f"🎯 **TARGET LEVELS (분할 익절 구간)**\n"
-        f"  ├ **TP1**: `{tp1_str}원` (+3.0%)\n"
-        f"  ├ **TP2**: `{tp2_str}원` (+6.0%)\n"
-        f"  └ **TP3**: `{tp3_str}원` (+9.0%)\n\n"
+        f"▪ **24H 거래대금**: `{acc_trade_price / 100_000_000:,.1f}억 원`\n"
+        f"▪ **MTF 종합 점수**: `{mtf['score']} / 100점 (강한 정배열)`\n\n"
+        f"🎯 **MULTI-LEVEL TARGETS (종합 분석 타겟)**\n"
+        f"  ├ **TP1 (4H BB/1.272)**: `{tp1_str}원` (+{tp1_pct:.1f}%)\n"
+        f"  ├ **TP2 (4H 전고점 저항)**: `{tp2_str}원` (+{tp2_pct:.1f}%)\n"
+        f"  └ **TP3 (1.618 확장)**: `{tp3_str}원` (+{tp3_pct:.1f}%)\n\n"
         f"🛡️ **RISK MANAGEMENT (리스크 관리)**\n"
-        f"  ├ **방어 손절가 (SL)**: `{sl_str}원` (-{calculated_stop_loss_pct}%)\n"
-        f"  └ **기대 손익비**: `1 : 2.0 이상 (고효율 구간)`\n"
+        f"  ├ **4H 지지 손절가 (SL)**: `{sl_str}원` (-{calculated_stop_loss_pct:.1f}%)\n"
+        f"  └ **타임프레임 상태**: `1D 대추세 + 4H 지지/저항 + 15M 돌파`\n"
         f"────────────────────────\n"
-        f"💡 *Strategy: 직전 저항선 돌파 및 실시간 볼륨 유입 포착*"
+        f"💡 *Strategy: 1D/4H/15M 멀티 타임프레임 컨플루언스 포착*"
     )
-    
-    print(f"🔥 [알림 전송 완료] {korean_name}({ticker})")
+
+    print(f"🔥 [알림 전송 완료] {korean_name}({ticker}) Score: {mtf['score']}")
     send_telegram_message(message)
 
-    # 캐시 갱신 (현재가 기준 목표가 및 발송 시각 저장)
     cache[ticker] = {
         "last_price": current_price,
         "target_1": target_1,
@@ -137,17 +297,26 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
     }
     save_cache(cache)
 
-if __name__ == "__main__":
-    print("업비트 하이엔드 퀀트 스캐너 가동 시작...")
-    try:
-        # 코인 한글 명칭 사전 로드
-        market_names = get_market_names()
 
-        market_url = "https://api.upbit.com/v1/market/all"
-        markets = [item['market'] for item in requests.get(market_url).json() if item['market'].startswith('KRW-')]
-        
-        ticker_url = f"https://api.upbit.com/v1/ticker?markets={','.join(markets)}"
-        ticker_data = requests.get(ticker_url).json()
+if __name__ == "__main__":
+    print("업비트 멀티 타임프레임 종합 분석 스캐너 가동 시작...")
+    try:
+        market_names = get_market_names()
+        markets = list(market_names.keys())
+
+        if not markets:
+            print("조회 가능한 KRW 마켓이 없습니다.")
+            exit()
+
+        chunk_size = 100
+        ticker_data = []
+
+        for i in range(0, len(markets), chunk_size):
+            chunk = markets[i:i + chunk_size]
+            ticker_url = f"https://api.upbit.com/v1/ticker?markets={','.join(chunk)}"
+            res = requests.get(ticker_url, timeout=10).json()
+            if isinstance(res, list):
+                ticker_data.extend(res)
 
         for data in ticker_data:
             ticker = data['market']
@@ -155,10 +324,12 @@ if __name__ == "__main__":
             current_price = data['trade_price']
             acc_trade_price = data['acc_trade_price_24h']
 
-            volume_spike_flag = True  # 테스트 플래그
-            calculated_stop_loss_pct = 4.5  
-
-            evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price, volume_spike_flag, calculated_stop_loss_pct)
+            evaluate_and_send_signal(
+                ticker=ticker,
+                korean_name=korean_name,
+                current_price=current_price,
+                acc_trade_price=acc_trade_price
+            )
 
     except Exception as e:
         print(f"실행 중 에러 발생: {e}")
