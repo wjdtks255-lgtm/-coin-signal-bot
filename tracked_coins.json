@@ -110,9 +110,9 @@
         "last_alert": "2026-09-19T14:41:28.226677"
     },
     "KRW-ADA": {
-        "last_price": 308.0,
-        "target_1": 317.24,
-        "last_alert": "2026-09-18T22:41:38.086679"
+        "last_price": 322.0,
+        "target_1": 328.8,
+        "last_alert": "2026-09-21T09:18:50.320309"
     },
     "KRW-DOS": {
         "last_price": 278.0,
@@ -180,9 +180,9 @@
         "last_alert": "2026-09-18T15:16:10.143362"
     },
     "KRW-LINK": {
-        "last_price": 16680.0,
-        "target_1": 17180.4,
-        "last_alert": "2026-09-18T15:16:10.832507"
+        "last_price": 17440.0,
+        "target_1": 17770,
+        "last_alert": "2026-09-21T09:18:37.223262"
     },
     "KRW-VTHO": {
         "last_price": 0.986,
