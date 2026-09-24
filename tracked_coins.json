@@ -45,9 +45,9 @@
         "last_alert": "2026-09-18T09:42:51.797009"
     },
     "KRW-DOGE": {
-        "last_price": 122.0,
-        "target_1": 125.66,
-        "last_alert": "2026-09-19T14:15:49.611896"
+        "last_price": 128.0,
+        "target_1": 142.1,
+        "last_alert": "2026-09-24T01:43:43.988039"
     },
     "KRW-WLD": {
         "last_price": 618.0,
@@ -403,5 +403,10 @@
         "last_price": 1936.0,
         "target_1": 2062,
         "last_alert": "2026-09-23T22:16:51.227766"
+    },
+    "KRW-SLX": {
+        "last_price": 95.6,
+        "target_1": 102.3,
+        "last_alert": "2026-09-24T01:44:33.622193"
     }
 }
