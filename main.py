@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime, timedelta
 
 CACHE_FILE = "tracked_coins.json"
-MIN_ACC_TRADE_PRICE = 10_000_000_000   # 거래대금 100억 이상
+MIN_ACC_TRADE_PRICE = 10_000_000_000   # 24시간 거래대금 100억 이상
 MAX_ALLOWABLE_STOP_LOSS_PCT = 10.0     # 최대 허용 손절 폭 10%
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -20,7 +20,8 @@ def send_telegram_message(text):
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
-        "parse_mode": "Markdown"
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True
     }
     try:
         res = requests.post(url, json=payload, timeout=10)
@@ -100,10 +101,7 @@ def format_price(price):
 
 
 def fetch_candles(market, timeframe_type="minutes", unit=60, count=50):
-    """
-    타임프레임별 업비트 캔들 수집
-    - timeframe_type: 'days' 또는 'minutes'
-    """
+    """타임프레임별 업비트 캔들 수집"""
     if timeframe_type == "days":
         url = f"https://api.upbit.com/v1/candles/days?market={market}&count={count}"
     else:
@@ -112,7 +110,7 @@ def fetch_candles(market, timeframe_type="minutes", unit=60, count=50):
     try:
         res = requests.get(url, timeout=10).json()
         if isinstance(res, list) and len(res) >= 20:
-            res.reverse()  # 과거 -> 최근 순서 정렬
+            res.reverse()
             closes = [c['trade_price'] for c in res]
             highs = [c['high_price'] for c in res]
             lows = [c['low_price'] for c in res]
@@ -150,10 +148,8 @@ def analyze_multi_timeframe(ticker):
     ma5_1d = np.mean(closes_1d[-5:])
     ma20_1d = np.mean(closes_1d[-20:])
     
-    # 일봉 20일선 위에 위치
     if current_price > ma20_1d:
         score += 15
-    # 일봉 5일선 > 20일선 골든크로스/정배열
     if ma5_1d >= ma20_1d:
         score += 15
 
@@ -171,23 +167,26 @@ def analyze_multi_timeframe(ticker):
 
     if current_price > ma20_4h:
         score += 20
-    if current_price >= bb_upper_4h * 0.98:  # 볼린저밴드 상단 근접/돌파 시도
+    if current_price >= bb_upper_4h * 0.98:
         score += 20
 
-    # 3. [15분봉 (15M)] 단기 돌파 및 모멘텀 (30점 만점)
+    # 3. [15분봉 (15M)] 단기 돌파 및 수급 배율 (30점 만점)
     closes_15m = candles_15m['closes']
     volumes_15m = candles_15m['volumes']
     
     ma5_15m = np.mean(closes_15m[-5:])
     ma20_15m = np.mean(closes_15m[-20:])
-    vol_avg_15m = np.mean(volumes_15m[-20:])
+    vol_avg_15m = np.mean(volumes_15m[-20:-1])
+    
+    # 15분봉 수급 폭발률 계산 (평균 대비 몇 %)
+    vol_ratio_15m = (volumes_15m[-1] / vol_avg_15m * 100) if vol_avg_15m > 0 else 100.0
 
     if ma5_15m > ma20_15m:
         score += 15
-    if volumes_15m[-1] > vol_avg_15m * 1.8:  # 단기 거래량 실시간 분출
+    if vol_ratio_15m >= 180:
         score += 15
 
-    # 4. [피보나치 확장 목표가 산출] (4시간봉 파동 기반)
+    # 4. [피보나치 확장 목표가 산출]
     wave_range = max(swing_high_4h - swing_low_4h, current_price * 0.02)
     fib_1272 = current_price + (wave_range * 0.272)
     fib_1618 = current_price + (wave_range * 0.618)
@@ -199,7 +198,8 @@ def analyze_multi_timeframe(ticker):
         "swing_high_4h": swing_high_4h,
         "bb_upper_4h": bb_upper_4h,
         "fib_1272": fib_1272,
-        "fib_1618": fib_1618
+        "fib_1618": fib_1618,
+        "vol_ratio_15m": vol_ratio_15m
     }
 
 
@@ -207,17 +207,12 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
     if acc_trade_price < MIN_ACC_TRADE_PRICE:
         return
 
-    # 멀티 타임프레임 종합 분석 실행
+    # 멀티 타임프레임 분석 실행
     mtf = analyze_multi_timeframe(ticker)
-    if not mtf:
+    if not mtf or mtf["score"] < 60:
         return
 
-    # 컨플루언스 스코어 60점 미만이면 하락/횡보장으로 판단 후 스킵
-    if mtf["score"] < 60:
-        return
-
-    # --- [멀티 타임프레임 기반 가격 산출] ---
-    # 1. SL (손절가): 4시간봉 스윙 전저점 지지선 활용
+    # --- [가격 및 손절가 계산] ---
     raw_sl = mtf["swing_low_4h"] * 0.995
     stop_loss = round_upbit_tick(raw_sl)
     calculated_stop_loss_pct = ((current_price - stop_loss) / current_price) * 100
@@ -225,21 +220,24 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
     if calculated_stop_loss_pct > MAX_ALLOWABLE_STOP_LOSS_PCT or calculated_stop_loss_pct < 0.8:
         return
 
-    # 2. TP1: 4시간봉 볼린저밴드 상단 또는 피보나치 1.272 레벨
+    # --- [목표가 계산] ---
     raw_tp1 = max(mtf["bb_upper_4h"], mtf["fib_1272"])
     if raw_tp1 <= current_price:
         raw_tp1 = current_price * 1.025
     target_1 = round_upbit_tick(raw_tp1)
 
-    # 3. TP2: 4시간봉 주요 스윙 전고점 저항선
     raw_tp2 = max(mtf["swing_high_4h"], target_1 * 1.02)
     target_2 = round_upbit_tick(raw_tp2)
 
-    # 4. TP3: 피보나치 1.618 확장선
     raw_tp3 = max(mtf["fib_1618"], target_2 * 1.025)
     target_3 = round_upbit_tick(raw_tp3)
 
-    # [스마트 트래킹 검증]
+    # --- [손익비 (Risk/Reward) 계산] ---
+    rr_tp1 = (target_1 - current_price) / (current_price - stop_loss) if (current_price - stop_loss) > 0 else 0
+    rr_tp2 = (target_2 - current_price) / (current_price - stop_loss) if (current_price - stop_loss) > 0 else 0
+    rr_tp3 = (target_3 - current_price) / (current_price - stop_loss) if (current_price - stop_loss) > 0 else 0
+
+    # --- [스마트 트래킹 검증] ---
     cache = load_cache()
     now = datetime.now()
 
@@ -258,7 +256,7 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
         if current_price < prev_target_1 * 1.015:
             return
 
-    # 동적 가격 포맷팅
+    # --- [출력 포맷팅] ---
     curr_str = format_price(current_price)
     tp1_str = format_price(target_1)
     tp2_str = format_price(target_2)
@@ -269,20 +267,28 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
     tp2_pct = ((target_2 - current_price) / current_price) * 100
     tp3_pct = ((target_3 - current_price) / current_price) * 100
 
+    # 리스크 수준에 따른 경고 표기
+    sl_warning = " ⚠️ (손절폭 유의)" if calculated_stop_loss_pct >= 7.0 else ""
+
+    # 업비트 웹/앱 차트 연결 링크
+    upbit_url = f"https://upbit.com/exchange?code=CASA.{ticker}"
+
     message = (
         f"🚀 **[MULTI-TIMEFRAME QUANT SIGNAL]**\n"
         f"────────────────────────\n"
         f"▪ **자산명**: `{korean_name} ({ticker})`\n"
         f"▪ **현재가**: `{curr_str} KRW`\n"
         f"▪ **24H 거래대금**: `{acc_trade_price / 100_000_000:,.1f}억 원`\n"
+        f"▪ **15M 수급 강도**: `평균 대비 {mtf['vol_ratio_15m']:.0f}% 유입 🔥`\n"
         f"▪ **MTF 종합 점수**: `{mtf['score']} / 100점 (강한 정배열)`\n\n"
-        f"🎯 **MULTI-LEVEL TARGETS (종합 분석 타겟)**\n"
-        f"  ├ **TP1 (4H BB/1.272)**: `{tp1_str}원` (+{tp1_pct:.1f}%)\n"
-        f"  ├ **TP2 (4H 전고점 저항)**: `{tp2_str}원` (+{tp2_pct:.1f}%)\n"
-        f"  └ **TP3 (1.618 확장)**: `{tp3_str}원` (+{tp3_pct:.1f}%)\n\n"
+        f"🎯 **MULTI-LEVEL TARGETS (목표가 & 손익비)**\n"
+        f"  ├ **TP1 (4H BB/1.272)**: `{tp1_str}원` (+{tp1_pct:.1f}%) | R:R 1:{rr_tp1:.1f}\n"
+        f"  ├ **TP2 (4H 전고점)**: `{tp2_str}원` (+{tp2_pct:.1f}%) | R:R 1:{rr_tp2:.1f}\n"
+        f"  └ **TP3 (1.618 확장)**: `{tp3_str}원` (+{tp3_pct:.1f}%) | R:R 1:{rr_tp3:.1f}\n\n"
         f"🛡️ **RISK MANAGEMENT (리스크 관리)**\n"
-        f"  ├ **4H 지지 손절가 (SL)**: `{sl_str}원` (-{calculated_stop_loss_pct:.1f}%)\n"
-        f"  └ **타임프레임 상태**: `1D 대추세 + 4H 지지/저항 + 15M 돌파`\n"
+        f"  ├ **4H 지지 손절가 (SL)**: `{sl_str}원` (-{calculated_stop_loss_pct:.1f}%){sl_warning}\n"
+        f"  └ **타임프레임**: `1D 대추세 + 4H 지지/저항 + 15M 돌파`\n\n"
+        f"📱 [업비트 차트 열기]({upbit_url})\n"
         f"────────────────────────\n"
         f"💡 *Strategy: 1D/4H/15M 멀티 타임프레임 컨플루언스 포착*"
     )
