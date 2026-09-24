@@ -330,9 +330,9 @@
         "last_alert": "2026-09-20T11:15:48.901986"
     },
     "KRW-HBAR": {
-        "last_price": 118.0,
-        "target_1": 122.6,
-        "last_alert": "2026-09-21T05:16:34.509762"
+        "last_price": 126.0,
+        "target_1": 135.8,
+        "last_alert": "2026-09-24T05:16:04.986839"
     },
     "KRW-T": {
         "last_price": 6.85,
@@ -370,9 +370,9 @@
         "last_alert": "2026-09-22T08:46:10.745343"
     },
     "KRW-ETC": {
-        "last_price": 12300.0,
-        "target_1": 12530,
-        "last_alert": "2026-09-22T14:17:26.062543"
+        "last_price": 12760.0,
+        "target_1": 13140,
+        "last_alert": "2026-09-24T05:16:15.731873"
     },
     "KRW-WET": {
         "last_price": 93.7,
