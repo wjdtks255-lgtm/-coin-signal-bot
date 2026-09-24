@@ -428,5 +428,10 @@
         "last_price": 295.0,
         "target_1": 321.4,
         "last_alert": "2026-09-24T14:46:57.345910"
+    },
+    "KRW-STEEM": {
+        "last_price": 84.7,
+        "target_1": 89.95,
+        "last_alert": "2026-09-24T17:01:42.562503"
     }
 }
