@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 CACHE_FILE = "tracked_coins.json"
 MIN_ACC_TRADE_PRICE = 10_000_000_000   # 24시간 거래대금 100억 이상
 MAX_ALLOWABLE_STOP_LOSS_PCT = 10.0     # 최대 허용 손절 폭 10%
+MIN_RISK_REWARD_RATIO = 1.0            # 최소 손익비 (TP1 기준 1.0 이상)
+MIN_15M_VOL_RATIO = 120.0              # 15분봉 수급 유입 최소 기준 (120% 이상)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -56,7 +58,6 @@ def get_market_names():
 
 
 def round_upbit_tick(price):
-    """업비트 KRW 마켓 호가 단위(Tick Size) 정밀 적용"""
     if price >= 2_000_000:
         tick = 1000
     elif price >= 1_000_000:
@@ -101,7 +102,6 @@ def format_price(price):
 
 
 def fetch_candles(market, timeframe_type="minutes", unit=60, count=50):
-    """타임프레임별 업비트 캔들 수집"""
     if timeframe_type == "days":
         url = f"https://api.upbit.com/v1/candles/days?market={market}&count={count}"
     else:
@@ -126,13 +126,73 @@ def fetch_candles(market, timeframe_type="minutes", unit=60, count=50):
     return None
 
 
+def check_bitcoin_market_condition():
+    """
+    [비트코인(KRW-BTC) 시장 진단 함수]
+    - 1시간봉 기준 MA20 이탈 시 하락 경고
+    - 15분봉 단기 급락(-1.0% 이상) 포착 시 경고
+    - 비트코인 유효 상태(True: 안전, False: 위험) 및 사유 반환
+    """
+    btc_1h = fetch_candles("KRW-BTC", timeframe_type="minutes", unit=60, count=30)
+    btc_15m = fetch_candles("KRW-BTC", timeframe_type="minutes", unit=15, count=10)
+
+    if not btc_1h or not btc_15m:
+        return True, "BTC 데이터 수집 불가 (스킵 안함)"
+
+    curr_price = btc_15m['closes'][-1]
+    prev_15m_price = btc_15m['closes'][-2]
+    ma20_1h = np.mean(btc_1h['closes'][-20:])
+
+    # 15분봉 단기 변동률
+    change_15m = ((curr_price - prev_15m_price) / prev_15m_price) * 100
+
+    reasons = []
+    is_safe = True
+
+    if curr_price < ma20_1h:
+        is_safe = False
+        reasons.append("1시간봉 20일 이평선 이탈 (하락 추세)")
+
+    if change_15m <= -1.0:
+        is_safe = False
+        reasons.append(f"15분봉 단기 급락 발생 ({change_15m:.2f}%)")
+
+    if not is_safe:
+        cache = load_cache()
+        now = datetime.now()
+        last_btc_alert = cache.get("BTC_WARNING", {}).get("last_alert", "")
+
+        # 2시간 내에 경고 알림을 보낸 적이 없으면 발송
+        should_alert = True
+        if last_btc_alert:
+            try:
+                if now - datetime.fromisoformat(last_btc_alert) < timedelta(hours=2):
+                    should_alert = False
+            except Exception:
+                pass
+
+        if should_alert:
+            upbit_btc_url = "https://upbit.com/exchange?code=CASA.KRW-BTC"
+            alert_msg = (
+                f"🚨 **[BITCOIN MARKET WARNING]**\n"
+                f"────────────────────────\n"
+                f"▪ **자산명**: `비트코인 (KRW-BTC)`\n"
+                f"▪ **현재가**: `{format_price(curr_price)} KRW`\n"
+                f"▪ **진단 사유**: `{reasons[0]}`\n"
+                f"▪ **시장 상태**: `⚠️ 비트코인 불안정 (알트코인 매수 일시 정지)`\n\n"
+                f"📱 [비트코인 차트 확인]({upbit_btc_url})\n"
+                f"────────────────────────\n"
+                f"💡 *Strategy: BTC 하락에 따른 알트코인 시그널 필터링 가동 중*"
+            )
+            send_telegram_message(alert_msg)
+            
+            cache["BTC_WARNING"] = {"last_alert": now.isoformat()}
+            save_cache(cache)
+
+    return is_safe, " / ".join(reasons) if reasons else "BTC 안정세"
+
+
 def analyze_multi_timeframe(ticker):
-    """
-    [멀티 타임프레임 종합 분석 함수]
-    1. 일봉(1D): 대추세 및 메이저 방향성
-    2. 4시간봉(4H): 구조적 지지/저항 및 파동 분석
-    3. 15분봉(15M): 단기 변동성 및 진입 모멘텀
-    """
     candles_1d = fetch_candles(ticker, timeframe_type="days", count=30)
     candles_4h = fetch_candles(ticker, timeframe_type="minutes", unit=240, count=40)
     candles_15m = fetch_candles(ticker, timeframe_type="minutes", unit=15, count=40)
@@ -143,7 +203,7 @@ def analyze_multi_timeframe(ticker):
     current_price = candles_15m['closes'][-1]
     score = 0
 
-    # 1. [일봉 (1D)] 대추세 검증 (30점 만점)
+    # 1. [일봉 (1D)] 대추세 검증
     closes_1d = candles_1d['closes']
     ma5_1d = np.mean(closes_1d[-5:])
     ma20_1d = np.mean(closes_1d[-20:])
@@ -153,7 +213,7 @@ def analyze_multi_timeframe(ticker):
     if ma5_1d >= ma20_1d:
         score += 15
 
-    # 2. [4시간봉 (4H)] 지지/저항 및 볼린저밴드 (40점 만점)
+    # 2. [4시간봉 (4H)] 지지/저항 및 볼린저밴드
     closes_4h = candles_4h['closes']
     highs_4h = candles_4h['highs']
     lows_4h = candles_4h['lows']
@@ -170,7 +230,7 @@ def analyze_multi_timeframe(ticker):
     if current_price >= bb_upper_4h * 0.98:
         score += 20
 
-    # 3. [15분봉 (15M)] 단기 돌파 및 수급 배율 (30점 만점)
+    # 3. [15분봉 (15M)] 단기 돌파 및 수급 배율
     closes_15m = candles_15m['closes']
     volumes_15m = candles_15m['volumes']
     
@@ -178,7 +238,6 @@ def analyze_multi_timeframe(ticker):
     ma20_15m = np.mean(closes_15m[-20:])
     vol_avg_15m = np.mean(volumes_15m[-20:-1])
     
-    # 15분봉 수급 폭발률 계산 (평균 대비 몇 %)
     vol_ratio_15m = (volumes_15m[-1] / vol_avg_15m * 100) if vol_avg_15m > 0 else 100.0
 
     if ma5_15m > ma20_15m:
@@ -186,7 +245,7 @@ def analyze_multi_timeframe(ticker):
     if vol_ratio_15m >= 180:
         score += 15
 
-    # 4. [피보나치 확장 목표가 산출]
+    # 4. [피보나치 확장 목표가]
     wave_range = max(swing_high_4h - swing_low_4h, current_price * 0.02)
     fib_1272 = current_price + (wave_range * 0.272)
     fib_1618 = current_price + (wave_range * 0.618)
@@ -207,12 +266,13 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
     if acc_trade_price < MIN_ACC_TRADE_PRICE:
         return
 
-    # 멀티 타임프레임 분석 실행
     mtf = analyze_multi_timeframe(ticker)
     if not mtf or mtf["score"] < 60:
         return
 
-    # --- [가격 및 손절가 계산] ---
+    if mtf["vol_ratio_15m"] < MIN_15M_VOL_RATIO:
+        return
+
     raw_sl = mtf["swing_low_4h"] * 0.995
     stop_loss = round_upbit_tick(raw_sl)
     calculated_stop_loss_pct = ((current_price - stop_loss) / current_price) * 100
@@ -220,7 +280,6 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
     if calculated_stop_loss_pct > MAX_ALLOWABLE_STOP_LOSS_PCT or calculated_stop_loss_pct < 0.8:
         return
 
-    # --- [목표가 계산] ---
     raw_tp1 = max(mtf["bb_upper_4h"], mtf["fib_1272"])
     if raw_tp1 <= current_price:
         raw_tp1 = current_price * 1.025
@@ -232,12 +291,14 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
     raw_tp3 = max(mtf["fib_1618"], target_2 * 1.025)
     target_3 = round_upbit_tick(raw_tp3)
 
-    # --- [손익비 (Risk/Reward) 계산] ---
-    rr_tp1 = (target_1 - current_price) / (current_price - stop_loss) if (current_price - stop_loss) > 0 else 0
-    rr_tp2 = (target_2 - current_price) / (current_price - stop_loss) if (current_price - stop_loss) > 0 else 0
-    rr_tp3 = (target_3 - current_price) / (current_price - stop_loss) if (current_price - stop_loss) > 0 else 0
+    risk_pct = current_price - stop_loss
+    rr_tp1 = (target_1 - current_price) / risk_pct if risk_pct > 0 else 0
+    rr_tp2 = (target_2 - current_price) / risk_pct if risk_pct > 0 else 0
+    rr_tp3 = (target_3 - current_price) / risk_pct if risk_pct > 0 else 0
 
-    # --- [스마트 트래킹 검증] ---
+    if rr_tp1 < MIN_RISK_REWARD_RATIO:
+        return
+
     cache = load_cache()
     now = datetime.now()
 
@@ -256,7 +317,15 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
         if current_price < prev_target_1 * 1.015:
             return
 
-    # --- [출력 포맷팅] ---
+    if mtf['vol_ratio_15m'] >= 250:
+        vol_emoji = "💥 (폭발적 유입)"
+    elif mtf['vol_ratio_15m'] >= 180:
+        vol_emoji = "🔥 (강한 유입)"
+    else:
+        vol_emoji = "⚡ (유입 시작)"
+
+    sl_warning = " ⚠️ (손절폭 유의)" if calculated_stop_loss_pct >= 7.0 else ""
+
     curr_str = format_price(current_price)
     tp1_str = format_price(target_1)
     tp2_str = format_price(target_2)
@@ -267,10 +336,6 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
     tp2_pct = ((target_2 - current_price) / current_price) * 100
     tp3_pct = ((target_3 - current_price) / current_price) * 100
 
-    # 리스크 수준에 따른 경고 표기
-    sl_warning = " ⚠️ (손절폭 유의)" if calculated_stop_loss_pct >= 7.0 else ""
-
-    # 업비트 웹/앱 차트 연결 링크
     upbit_url = f"https://upbit.com/exchange?code=CASA.{ticker}"
 
     message = (
@@ -279,7 +344,7 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
         f"▪ **자산명**: `{korean_name} ({ticker})`\n"
         f"▪ **현재가**: `{curr_str} KRW`\n"
         f"▪ **24H 거래대금**: `{acc_trade_price / 100_000_000:,.1f}억 원`\n"
-        f"▪ **15M 수급 강도**: `평균 대비 {mtf['vol_ratio_15m']:.0f}% 유입 🔥`\n"
+        f"▪ **15M 수급 강도**: `평균 대비 {mtf['vol_ratio_15m']:.0f}% {vol_emoji}`\n"
         f"▪ **MTF 종합 점수**: `{mtf['score']} / 100점 (강한 정배열)`\n\n"
         f"🎯 **MULTI-LEVEL TARGETS (목표가 & 손익비)**\n"
         f"  ├ **TP1 (4H BB/1.272)**: `{tp1_str}원` (+{tp1_pct:.1f}%) | R:R 1:{rr_tp1:.1f}\n"
@@ -293,7 +358,7 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
         f"💡 *Strategy: 1D/4H/15M 멀티 타임프레임 컨플루언스 포착*"
     )
 
-    print(f"🔥 [알림 전송 완료] {korean_name}({ticker}) Score: {mtf['score']}")
+    print(f"🔥 [알림 전송 완료] {korean_name}({ticker}) Score: {mtf['score']} R:R {rr_tp1:.1f}")
     send_telegram_message(message)
 
     cache[ticker] = {
@@ -307,6 +372,13 @@ def evaluate_and_send_signal(ticker, korean_name, current_price, acc_trade_price
 if __name__ == "__main__":
     print("업비트 멀티 타임프레임 종합 분석 스캐너 가동 시작...")
     try:
+        # 1. 비트코인 시장 상태 우선 검증
+        btc_safe, btc_reason = check_bitcoin_market_condition()
+        
+        if not btc_safe:
+            print(f"⚠️ [시장 위험] 비트코인 상태 불안정으로 인해 알트코인 스캐닝을 일시 정지합니다. 사유: {btc_reason}")
+            exit()
+
         market_names = get_market_names()
         markets = list(market_names.keys())
 
@@ -339,3 +411,4 @@ if __name__ == "__main__":
 
     except Exception as e:
         print(f"실행 중 에러 발생: {e}")
+
