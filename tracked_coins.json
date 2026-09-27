@@ -105,9 +105,9 @@
         "last_alert": "2026-09-23T06:23:14.072412"
     },
     "KRW-ONDO": {
-        "last_price": 596.0,
-        "target_1": 613.88,
-        "last_alert": "2026-09-19T14:41:28.226677"
+        "last_price": 727.0,
+        "target_1": 824.8,
+        "last_alert": "2026-09-27T00:25:13.746401"
     },
     "KRW-ADA": {
         "last_price": 338.0,
@@ -165,9 +165,9 @@
         "last_alert": "2026-09-19T07:14:49.230740"
     },
     "KRW-AXS": {
-        "last_price": 1366.0,
-        "target_1": 1406.98,
-        "last_alert": "2026-09-18T08:17:40.367037"
+        "last_price": 1575.0,
+        "target_1": 1701,
+        "last_alert": "2026-09-27T00:24:59.322116"
     },
     "KRW-INJ": {
         "last_price": 11390.0,
@@ -433,5 +433,10 @@
         "last_price": 84.7,
         "target_1": 89.95,
         "last_alert": "2026-09-24T17:01:42.562503"
+    },
+    "KRW-CBK": {
+        "last_price": 303.0,
+        "target_1": 325.9,
+        "last_alert": "2026-09-27T00:25:06.536114"
     }
 }
