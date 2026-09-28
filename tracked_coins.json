@@ -305,9 +305,9 @@
         "last_alert": "2026-09-20T01:14:45.144824"
     },
     "KRW-MANTRA": {
-        "last_price": 6.62,
-        "target_1": 6.8186,
-        "last_alert": "2026-09-20T02:16:18.344298"
+        "last_price": 7.02,
+        "target_1": 7.409,
+        "last_alert": "2026-09-28T23:44:17.880159"
     },
     "KRW-ONG": {
         "last_price": 121.0,
@@ -458,5 +458,10 @@
         "last_price": 43.2,
         "target_1": 45.53,
         "last_alert": "2026-09-28T20:46:21.881708"
+    },
+    "KRW-ELSA": {
+        "last_price": 76.4,
+        "target_1": 82.44,
+        "last_alert": "2026-09-28T23:44:49.583643"
     }
 }
