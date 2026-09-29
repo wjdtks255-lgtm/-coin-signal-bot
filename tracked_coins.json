@@ -550,6 +550,25 @@
             "entry_time": "2026-09-29T08:38:03.598536+00:00",
             "signal_candle": "2026-09-29T17:15:00",
             "btc_status": "NEUTRAL"
+        },
+        "KRW-BTC": {
+            "ticker": "KRW-BTC",
+            "korean_name": "비트코인",
+            "entry": 113852000.0,
+            "original_sl": 111884000,
+            "current_sl": 111884000,
+            "tp1": 116804000,
+            "tp2": 118556000,
+            "tp3": 121520000,
+            "score": 80,
+            "volume_ratio": 169.9854108346203,
+            "rr_tp1": 1.5,
+            "rr_tp2": 2.3902439024390243,
+            "rr_tp3": 3.8963414634146343,
+            "stage": "ENTRY",
+            "entry_time": "2026-09-29T08:42:58.886340+00:00",
+            "signal_candle": "2026-09-29T17:15:00",
+            "btc_status": "NEUTRAL"
         }
     },
     "history": []
