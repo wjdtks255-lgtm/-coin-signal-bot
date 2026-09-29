@@ -1,222 +1,191 @@
-import json
 import os
 import time
+import json
+import math
 import requests
+import pandas as pd
 import numpy as np
-
-from datetime import datetime, timezone
-
+from datetime import datetime, timezone, timedelta
 
 # ============================================================
-# UPBIT SPOT SMART SIGNAL BOT
-# ============================================================
-#
-# ALL KRW MARKET SCANNER
-#
-# 1. Scan ALL KRW markets
-# 2. Fast market-wide candidate scan
-# 3. Deep analysis only for promising candidates
-# 4. BTC is NOT an absolute altcoin filter
-# 5. BTC crash blocks new entries
-# 6. BTC weak requires stronger individual coins
-# 7. TP1 -> SL ENTRY
-# 8. TP2 -> SL TP1
-# 9. TP3 -> close
+# UPBIT SMART SIGNAL BOT V4
+# SCORE-BASED ALTMARKET SIGNAL SYSTEM
 # ============================================================
 
+print("=" * 65)
+print("UPBIT SMART SIGNAL BOT V4")
+print("=" * 65)
 
 # ============================================================
-# FILE
+# CONFIG
 # ============================================================
 
 CACHE_FILE = "tracked_coins.json"
+
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+UPBIT_BASE_URL = "https://api.upbit.com/v1"
+
+# ------------------------------------------------------------
+# MARKET SCAN
+# ------------------------------------------------------------
+
+MAX_DEEP_SCAN = 80
+
+# 최소 24H 거래대금
+MIN_FINAL_24H_TRADE_VALUE = 1_000_000_000
+
+# ------------------------------------------------------------
+# SIGNAL SCORE
+# ------------------------------------------------------------
+
+SIGNAL_SCORE = 75
+
+# BTC 약세일 때 필요한 최소 점수
+WEAK_BTC_SCORE = 82
+
+# 아주 강한 신호
+STRONG_SCORE = 88
+
+# ------------------------------------------------------------
+# VOLUME
+# ------------------------------------------------------------
+
+MIN_VOLUME_RATIO = 130
+STRONG_VOLUME_RATIO = 200
+
+# ------------------------------------------------------------
+# CANDLE
+# ------------------------------------------------------------
+
+MIN_BODY_RATIO = 0.45
+MIN_CLOSE_POSITION = 0.62
+
+# ------------------------------------------------------------
+# ENTRY / RISK
+# ------------------------------------------------------------
+
+MAX_ENTRY_DISTANCE_FROM_EMA20 = 6.0
+
+MIN_STOP_LOSS_PCT = 1.0
+MAX_STOP_LOSS_PCT = 7.0
+
+MIN_RR_TP1 = 1.5
+MIN_RR_TP2 = 2.0
+
+MAX_TP1_DISTANCE_PCT = 15.0
+
+# ------------------------------------------------------------
+# SIGNAL COOLDOWN
+# ------------------------------------------------------------
+
+SIGNAL_COOLDOWN_HOURS = 6
+
+# 같은 코인이라도 가격이 일정 이상 달라야 새 신호
+MIN_NEW_SIGNAL_PRICE_DISTANCE = 2.0
+
+# ------------------------------------------------------------
+# BTC MARKET
+# ------------------------------------------------------------
+
+BTC_15M_CRASH_PCT = -1.5
+BTC_1H_CRASH_PCT = -2.0
+
+# ------------------------------------------------------------
+# POSITION MANAGEMENT
+# ------------------------------------------------------------
+
+MOVE_SL_TO_ENTRY_AFTER_TP1 = True
+MOVE_SL_TO_TP1_AFTER_TP2 = True
+
+# ============================================================
+# SESSION
+# ============================================================
+
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "UpbitSmartSignalBot/4.0"
+})
+
+KST = timezone(timedelta(hours=9))
+
+
+# ============================================================
+# UTILITY
+# ============================================================
+
+def now_kst():
+    return datetime.now(KST)
+
+
+def fmt_time(dt=None):
+    if dt is None:
+        dt = now_kst()
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def load_cache():
+    if not os.path.exists(CACHE_FILE):
+        return {
+            "positions": {},
+            "history": [],
+            "sent_signal_ids": []
+        }
+
+    try:
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if not isinstance(data, dict):
+            data = {}
+
+        data.setdefault("positions", {})
+        data.setdefault("history", [])
+        data.setdefault("sent_signal_ids", [])
+
+        return data
+
+    except Exception as e:
+        print(f"[CACHE LOAD ERROR] {e}")
+
+        return {
+            "positions": {},
+            "history": [],
+            "sent_signal_ids": []
+        }
+
+
+def save_cache(cache):
+    temp_file = CACHE_FILE + ".tmp"
+
+    try:
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+
+        os.replace(temp_file, CACHE_FILE)
+
+    except Exception as e:
+        print(f"[CACHE SAVE ERROR] {e}")
 
 
 # ============================================================
 # TELEGRAM
 # ============================================================
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-
-
-# ============================================================
-# UPBIT API
-# ============================================================
-
-UPBIT_BASE_URL = "https://api.upbit.com/v1"
-
-session = requests.Session()
-
-session.headers.update({
-    "User-Agent": "Upbit-All-Market-Smart-Signal-Bot/5.0"
-})
-
-
-# ============================================================
-# MARKET SCAN
-# ============================================================
-
-# 전체 KRW 시장을 1차 검사한다.
-#
-# 단, 너무 거래량이 적은 종목은 최종 신호에서 제외한다.
-#
-# 이 값은 "스캔 제외 기준"이 아니라
-# "최종 후보의 최소 유동성 기준"에 가깝게 사용한다.
-
-MIN_FINAL_24H_TRADE_VALUE = 1_000_000_000
-
-# 전체 시장 중 1차 후보를 몇 개까지 정밀분석할지
-MAX_DEEP_SCAN = 80
-
-
-# ============================================================
-# SIGNAL QUALITY
-# ============================================================
-
-MIN_SCORE = 75
-
-WEAK_BTC_MIN_SCORE = 82
-
-STRONG_SCORE = 88
-
-MIN_VOLUME_RATIO = 160
-
-WEAK_BTC_VOLUME_RATIO = 220
-
-STRONG_VOLUME_RATIO = 300
-
-MIN_BODY_RATIO = 0.50
-
-MAX_ENTRY_DISTANCE_FROM_EMA20 = 4.5
-
-
-# ============================================================
-# MOMENTUM PRE-SCAN
-# ============================================================
-
-# 24시간 상승률이 이 값보다 낮아도
-# 다른 조건이 강하면 후보가 될 수 있도록 너무 높게 잡지 않는다.
-
-MIN_24H_CHANGE = -3.0
-
-# 단기 급락 종목 제외
-
-MAX_24H_CRASH = -20.0
-
-
-# ============================================================
-# RISK
-# ============================================================
-
-MIN_STOP_LOSS_PCT = 1.0
-
-MAX_STOP_LOSS_PCT = 7.0
-
-MIN_RR_TP1 = 1.5
-
-MIN_RR_TP2 = 2.0
-
-MAX_TP1_DISTANCE_PCT = 12.0
-
-
-# ============================================================
-# DUPLICATE
-# ============================================================
-
-SIGNAL_COOLDOWN_HOURS = 6
-
-MIN_NEW_SIGNAL_PRICE_DISTANCE = 2.0
-
-
-# ============================================================
-# BTC
-# ============================================================
-
-BTC_15M_CRASH_PCT = -1.5
-
-BTC_1H_CRASH_PCT = -2.0
-
-
-# ============================================================
-# TRACKING
-# ============================================================
-
-MOVE_SL_TO_ENTRY_AFTER_TP1 = True
-
-MOVE_SL_TO_TP1_AFTER_TP2 = True
-
-
-# ============================================================
-# API GET
-# ============================================================
-
-def api_get(endpoint, params=None):
-
-    try:
-
-        response = session.get(
-            f"{UPBIT_BASE_URL}{endpoint}",
-            params=params,
-            timeout=15
-        )
-
-        response.raise_for_status()
-
-        return response.json()
-
-    except Exception as e:
-
-        print(
-            f"[API ERROR] {endpoint}: {e}"
-        )
-
-        return None
-
-
-# ============================================================
-# TELEGRAM STATUS
-# ============================================================
-
-def telegram_status():
-
-    token_ok = bool(
-        TELEGRAM_TOKEN
-        and TELEGRAM_TOKEN.strip()
-    )
-
-    chat_ok = bool(
-        TELEGRAM_CHAT_ID
-        and TELEGRAM_CHAT_ID.strip()
-    )
-
-    print(
-        "[TELEGRAM] "
-        f"TOKEN={'OK' if token_ok else 'MISSING'} "
-        f"CHAT_ID={'OK' if chat_ok else 'MISSING'}"
-    )
-
-    return token_ok and chat_ok
-
-
-# ============================================================
-# TELEGRAM SEND
-# ============================================================
-
 def send_telegram_message(text):
-
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-
-        print(
-            "[TELEGRAM] 환경변수가 없습니다."
-        )
-
+        print("[TELEGRAM] 환경변수가 없습니다.")
         return False
 
-    url = (
-        f"https://api.telegram.org/"
-        f"bot{TELEGRAM_TOKEN}/sendMessage"
-    )
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -226,7 +195,6 @@ def send_telegram_message(text):
     }
 
     try:
-
         response = session.post(
             url,
             json=payload,
@@ -238,1588 +206,568 @@ def send_telegram_message(text):
         result = response.json()
 
         if not result.get("ok"):
-
-            print(
-                f"[TELEGRAM ERROR] {result}"
-            )
-
+            print(f"[TELEGRAM ERROR] {result}")
             return False
 
-        print(
-            "[TELEGRAM] 전송 성공"
-        )
-
+        print("[TELEGRAM] 전송 성공")
         return True
 
     except Exception as e:
-
-        print(
-            f"[TELEGRAM ERROR] {e}"
-        )
-
+        print(f"[TELEGRAM ERROR] {e}")
         return False
 
 
+def telegram_status():
+    token_status = "OK" if TELEGRAM_TOKEN else "MISSING"
+    chat_status = "OK" if TELEGRAM_CHAT_ID else "MISSING"
+
+    print(
+        f"[TELEGRAM] TOKEN={token_status} "
+        f"CHAT_ID={chat_status}"
+    )
+
+
 # ============================================================
-# CACHE
+# UPBIT API
 # ============================================================
 
-def load_cache():
+def upbit_get(endpoint, params=None, timeout=15):
 
-    if not os.path.exists(
-        CACHE_FILE
-    ):
-
-        return {
-            "positions": {},
-            "history": []
-        }
+    url = UPBIT_BASE_URL + endpoint
 
     try:
-
-        with open(
-            CACHE_FILE,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
-            data = json.load(f)
-
-        if not isinstance(
-            data,
-            dict
-        ):
-
-            data = {}
-
-        data.setdefault(
-            "positions",
-            {}
+        response = session.get(
+            url,
+            params=params,
+            timeout=timeout
         )
 
-        data.setdefault(
-            "history",
-            []
-        )
+        response.raise_for_status()
 
-        return data
+        return response.json()
 
     except Exception as e:
-
-        print(
-            f"[CACHE LOAD ERROR] {e}"
-        )
-
-        return {
-            "positions": {},
-            "history": []
-        }
-
-
-def save_cache(cache):
-
-    try:
-
-        temp_file = (
-            CACHE_FILE
-            + ".tmp"
-        )
-
-        with open(
-            temp_file,
-            "w",
-            encoding="utf-8"
-        ) as f:
-
-            json.dump(
-                cache,
-                f,
-                ensure_ascii=False,
-                indent=4
-            )
-
-        os.replace(
-            temp_file,
-            CACHE_FILE
-        )
-
-    except Exception as e:
-
-        print(
-            f"[CACHE SAVE ERROR] {e}"
-        )
-
-
-# ============================================================
-# PRICE FORMAT
-# ============================================================
-
-def round_upbit_tick(price):
-
-    if price >= 2_000_000:
-        tick = 1000
-    elif price >= 1_000_000:
-        tick = 500
-    elif price >= 500_000:
-        tick = 100
-    elif price >= 100_000:
-        tick = 50
-    elif price >= 10_000:
-        tick = 10
-    elif price >= 1_000:
-        tick = 1
-    elif price >= 100:
-        tick = 0.1
-    elif price >= 10:
-        tick = 0.01
-    elif price >= 1:
-        tick = 0.001
-    elif price >= 0.1:
-        tick = 0.0001
-    elif price >= 0.01:
-        tick = 0.00001
-    else:
-        tick = 0.000001
-
-    return round(
-        round(price / tick) * tick,
-        8
-    )
-
-
-def format_price(price):
-
-    if price >= 1000:
-        return f"{price:,.0f}"
-
-    if price >= 100:
-        return f"{price:,.1f}"
-
-    if price >= 10:
-        return f"{price:,.2f}"
-
-    if price >= 1:
-        return f"{price:,.3f}"
-
-    if price >= 0.1:
-        return f"{price:,.4f}"
-
-    return f"{price:,.6f}"
-
-
-# ============================================================
-# EMA
-# ============================================================
-
-def ema(values, period):
-
-    values = np.asarray(
-        values,
-        dtype=float
-    )
-
-    if len(values) < period:
-
+        print(f"[UPBIT ERROR] {endpoint} | {e}")
         return None
 
-    alpha = 2 / (
-        period + 1
-    )
-
-    result = np.zeros(
-        len(values),
-        dtype=float
-    )
-
-    result[0] = values[0]
-
-    for i in range(
-        1,
-        len(values)
-    ):
-
-        result[i] = (
-            alpha * values[i]
-            +
-            (1 - alpha)
-            * result[i - 1]
-        )
-
-    return result
-
 
 # ============================================================
-# ATR
-# ============================================================
-
-def atr(
-    highs,
-    lows,
-    closes,
-    period=14
-):
-
-    highs = np.asarray(
-        highs,
-        dtype=float
-    )
-
-    lows = np.asarray(
-        lows,
-        dtype=float
-    )
-
-    closes = np.asarray(
-        closes,
-        dtype=float
-    )
-
-    if len(closes) < (
-        period + 1
-    ):
-
-        return None
-
-    prev_close = closes[:-1]
-
-    tr1 = (
-        highs[1:]
-        - lows[1:]
-    )
-
-    tr2 = np.abs(
-        highs[1:]
-        - prev_close
-    )
-
-    tr3 = np.abs(
-        lows[1:]
-        - prev_close
-    )
-
-    tr = np.maximum(
-        tr1,
-        np.maximum(
-            tr2,
-            tr3
-        )
-    )
-
-    return np.mean(
-        tr[-period:]
-    )
-
-
-# ============================================================
-# MARKET LIST
+# MARKETS
 # ============================================================
 
 def get_market_names():
 
-    data = api_get(
+    data = upbit_get(
         "/market/all",
-        {
-            "is_details": "true"
-        }
+        {"is_details": "true"}
     )
 
-    if not isinstance(
-        data,
-        list
-    ):
+    if not data:
+        return []
 
-        return {}
-
-    markets = {}
+    markets = []
 
     for item in data:
+        market = item.get("market", "")
 
-        market = item.get(
-            "market"
-        )
+        if market.startswith("KRW-"):
+            markets.append(market)
 
-        if not market:
+    return sorted(list(set(markets)))
 
-            continue
-
-        if not market.startswith(
-            "KRW-"
-        ):
-
-            continue
-
-        markets[
-            market
-        ] = item.get(
-            "korean_name",
-            market
-        )
-
-    return markets
-
-
-# ============================================================
-# ALL TICKERS
-# ============================================================
 
 def get_all_tickers(markets):
 
-    result = []
+    results = []
 
-    chunk_size = 100
+    for i in range(0, len(markets), 100):
 
-    for i in range(
-        0,
-        len(markets),
-        chunk_size
-    ):
+        chunk = markets[i:i + 100]
 
-        chunk = markets[
-            i:i + chunk_size
-        ]
-
-        data = api_get(
+        data = upbit_get(
             "/ticker",
-            {
-                "markets":
-                ",".join(chunk)
-            }
+            {"markets": ",".join(chunk)}
         )
 
-        if isinstance(
-            data,
-            list
-        ):
+        if data:
+            results.extend(data)
 
-            result.extend(
-                data
-            )
+        time.sleep(0.12)
 
-        time.sleep(
-            0.15
-        )
+    # 중복 제거
+    unique = {}
 
-    return result
+    for item in results:
+        market = item.get("market")
+
+        if market:
+            unique[market] = item
+
+    return list(unique.values())
 
 
 # ============================================================
 # CANDLES
 # ============================================================
 
-def fetch_candles(
-    market,
-    unit,
-    count
-):
+def get_candles(market, unit, count=120):
 
-    data = api_get(
-        f"/candles/minutes/{unit}",
+    endpoint = f"/candles/{unit}"
+
+    data = upbit_get(
+        endpoint,
         {
             "market": market,
             "count": count
         }
     )
 
-    if not isinstance(
-        data,
-        list
-    ):
-
+    if not data:
         return None
 
-    if len(data) < 30:
+    df = pd.DataFrame(data)
 
+    if df.empty:
         return None
 
-    data.reverse()
+    df = df.sort_values(
+        "candle_date_time_utc"
+    ).reset_index(drop=True)
 
-    # 현재 진행 중인 candle 제거
+    numeric_columns = [
+        "opening_price",
+        "high_price",
+        "low_price",
+        "trade_price",
+        "candle_acc_trade_volume",
+        "candle_acc_trade_price"
+    ]
 
-    if len(data) > 2:
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(
+                df[col],
+                errors="coerce"
+            )
 
-        data = data[:-1]
-
-    return data
-
-
-def fetch_daily_candles(
-    market,
-    count
-):
-
-    data = api_get(
-        "/candles/days",
-        {
-            "market": market,
-            "count": count
-        }
-    )
-
-    if not isinstance(
-        data,
-        list
-    ):
-
-        return None
-
-    if len(data) < 30:
-
-        return None
-
-    data.reverse()
-
-    if len(data) > 2:
-
-        data = data[:-1]
-
-    return data
+    return df
 
 
 # ============================================================
-# CANDLE QUALITY
+# INDICATORS
 # ============================================================
 
-def candle_quality(candle):
+def ema(series, length):
 
-    opening = candle[
-        "opening_price"
-    ]
+    return series.ewm(
+        span=length,
+        adjust=False
+    ).mean()
 
-    high = candle[
-        "high_price"
-    ]
 
-    low = candle[
-        "low_price"
-    ]
+def atr(df, length=14):
 
-    close = candle[
-        "trade_price"
-    ]
+    high = df["high_price"]
+    low = df["low_price"]
+    close = df["trade_price"]
 
-    candle_range = (
-        high - low
+    prev_close = close.shift(1)
+
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+
+    tr = pd.concat(
+        [tr1, tr2, tr3],
+        axis=1
+    ).max(axis=1)
+
+    return tr.rolling(length).mean()
+
+
+def rsi(series, length=14):
+
+    delta = series.diff()
+
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(length).mean()
+    avg_loss = loss.rolling(length).mean()
+
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+
+    result = 100 - (
+        100 / (1 + rs)
     )
 
-    if candle_range <= 0:
-
-        return 0, 0
-
-    body = abs(
-        close - opening
-    )
-
-    body_ratio = (
-        body
-        / candle_range
-    )
-
-    close_position = (
-        close - low
-    ) / candle_range
-
-    return (
-        body_ratio,
-        close_position
-    )
+    return result
 
 
 # ============================================================
-# BTC MARKET
+# BTC REGIME
 # ============================================================
 
 def check_btc_market():
 
-    btc15 = fetch_candles(
-        "KRW-BTC",
-        15,
-        100
-    )
+    try:
 
-    btc1h = fetch_candles(
-        "KRW-BTC",
-        60,
-        120
-    )
+        df15 = get_candles(
+            "KRW-BTC",
+            "minutes/15",
+            100
+        )
 
-    btc4h = fetch_candles(
-        "KRW-BTC",
-        240,
-        120
-    )
+        df1h = get_candles(
+            "KRW-BTC",
+            "minutes/60",
+            100
+        )
 
-    if not all([
-        btc15,
-        btc1h,
-        btc4h
-    ]):
+        df4h = get_candles(
+            "KRW-BTC",
+            "minutes/240",
+            100
+        )
+
+        if any(
+            x is None
+            for x in [df15, df1h, df4h]
+        ):
+            return {
+                "regime": "NEUTRAL",
+                "score": 50,
+                "change15": 0,
+                "change1h": 0
+            }
+
+        c15 = df15["trade_price"].iloc[-1]
+        c15_prev = df15["trade_price"].iloc[-2]
+
+        c1h = df1h["trade_price"].iloc[-1]
+        c1h_prev = df1h["trade_price"].iloc[-2]
+
+        ema20_1h = ema(
+            df1h["trade_price"],
+            20
+        )
+
+        ema50_1h = ema(
+            df1h["trade_price"],
+            50
+        )
+
+        ema20_4h = ema(
+            df4h["trade_price"],
+            20
+        )
+
+        change15 = (
+            c15 / c15_prev - 1
+        ) * 100
+
+        change1h = (
+            c1h / c1h_prev - 1
+        ) * 100
+
+        score = 0
+
+        if (
+            df4h["trade_price"].iloc[-1]
+            > ema20_4h.iloc[-1]
+        ):
+            score += 30
+
+        if (
+            ema20_1h.iloc[-1]
+            > ema50_1h.iloc[-1]
+        ):
+            score += 30
+
+        if (
+            c1h > ema20_1h.iloc[-1]
+        ):
+            score += 20
+
+        if change15 > -0.5:
+            score += 10
+
+        if change15 > 0:
+            score += 10
+
+        crash = False
+
+        if change15 <= BTC_15M_CRASH_PCT:
+            crash = True
+
+        if (
+            change1h <= BTC_1H_CRASH_PCT
+            and change15 < -0.8
+        ):
+            crash = True
+
+        if crash:
+            regime = "CRASH"
+
+        elif score >= 70:
+            regime = "BULL"
+
+        elif score >= 45:
+            regime = "NEUTRAL"
+
+        else:
+            regime = "WEAK"
 
         return {
-            "status": "UNKNOWN",
-            "score": 0,
-            "reason": "BTC 데이터 부족"
+            "regime": regime,
+            "score": score,
+            "change15": change15,
+            "change1h": change1h
         }
 
-    close15 = np.array([
-        x["trade_price"]
-        for x in btc15
-    ])
+    except Exception as e:
 
-    close1h = np.array([
-        x["trade_price"]
-        for x in btc1h
-    ])
-
-    close4h = np.array([
-        x["trade_price"]
-        for x in btc4h
-    ])
-
-    ema20_1h = ema(
-        close1h,
-        20
-    )
-
-    ema50_1h = ema(
-        close1h,
-        50
-    )
-
-    ema20_4h = ema(
-        close4h,
-        20
-    )
-
-    if any(
-        x is None
-        for x in [
-            ema20_1h,
-            ema50_1h,
-            ema20_4h
-        ]
-    ):
+        print(f"[BTC ERROR] {e}")
 
         return {
-            "status": "UNKNOWN",
-            "score": 0,
-            "reason": "BTC EMA 부족"
+            "regime": "NEUTRAL",
+            "score": 50,
+            "change15": 0,
+            "change1h": 0
         }
 
-    change15 = (
-        (
-            close15[-1]
-            - close15[-2]
-        )
-        / close15[-2]
+
+# ============================================================
+# FAST CANDIDATE SCORE
+# ============================================================
+
+def fast_candidate_score(item):
+
+    change = safe_float(
+        item.get("signed_change_rate")
     ) * 100
 
-    change1h = (
-        (
-            close1h[-1]
-            - close1h[-5]
-        )
-        / close1h[-5]
-    ) * 100
+    trade_value = safe_float(
+        item.get("acc_trade_price_24h")
+    )
+
+    high = safe_float(
+        item.get("high_price")
+    )
+
+    low = safe_float(
+        item.get("low_price")
+    )
+
+    price = safe_float(
+        item.get("trade_price")
+    )
 
     score = 0
 
-    if (
-        close4h[-1]
-        > ema20_4h[-1]
-    ):
+    if change >= 8:
+        score += 40
 
-        score += 35
+    elif change >= 5:
+        score += 30
 
-    if (
-        ema20_1h[-1]
-        > ema50_1h[-1]
-    ):
+    elif change >= 3:
+        score += 25
 
-        score += 35
-
-    if (
-        close1h[-1]
-        > ema20_1h[-1]
-    ):
-
+    elif change >= 1:
         score += 20
 
-    if change15 > -0.5:
-
-        score += 10
-
-    # ========================================================
-    # CRASH
-    # ========================================================
-
-    if change15 <= BTC_15M_CRASH_PCT:
-
-        return {
-            "status": "CRASH",
-            "score": score,
-            "reason":
-                f"BTC 15M 급락 {change15:.2f}%",
-            "change15": change15,
-            "change1h": change1h
-        }
-
-    if (
-        change1h <= BTC_1H_CRASH_PCT
-        and
-        change15 < -0.8
-    ):
-
-        return {
-            "status": "CRASH",
-            "score": score,
-            "reason":
-                f"BTC 1H 급락 {change1h:.2f}%",
-            "change15": change15,
-            "change1h": change1h
-        }
-
-    # ========================================================
-    # STATUS
-    # ========================================================
-
-    if score >= 70:
-
-        status = "BULL"
-
-        reason = (
-            f"BTC 강세 / Score {score}"
-        )
-
-    elif score >= 45:
-
-        status = "NEUTRAL"
-
-        reason = (
-            f"BTC 중립 / Score {score}"
-        )
+    elif change >= 0:
+        score += 15
 
     else:
+        score += 5
 
-        status = "WEAK"
+    if trade_value >= 30_000_000_000:
+        score += 25
 
-        reason = (
-            f"BTC 약세 / Score {score}"
-        )
+    elif trade_value >= 10_000_000_000:
+        score += 20
 
-    return {
-        "status": status,
-        "score": score,
-        "reason": reason,
-        "change15": change15,
-        "change1h": change1h
-    }
+    elif trade_value >= 3_000_000_000:
+        score += 15
+
+    elif trade_value >= 1_000_000_000:
+        score += 10
+
+    if price > 0 and low > 0:
+
+        volatility = (
+            (high - low) / price
+        ) * 100
+
+        if volatility >= 5:
+            score += 15
+
+        elif volatility >= 3:
+            score += 10
+
+        elif volatility >= 1.5:
+            score += 5
+
+    return score
 
 
-# ============================================================
-# FAST MARKET-WIDE PRE-SCAN
-# ============================================================
-
-def build_candidates(
-    tickers,
-    market_names
-):
+def build_candidates(tickers):
 
     candidates = []
 
-    print(
-        f"\n[MARKET] "
-        f"전체 KRW 마켓 {len(market_names)}개 확인"
-    )
+    for item in tickers:
 
-    for ticker in tickers:
-
-        market = ticker.get(
-            "market"
-        )
+        market = item.get("market")
 
         if not market:
-
             continue
 
-        if market not in market_names:
-
-            continue
-
-        price = ticker.get(
-            "trade_price",
-            0
+        trade_value = safe_float(
+            item.get("acc_trade_price_24h")
         )
 
-        trade_value = ticker.get(
-            "acc_trade_price_24h",
-            0
-        )
-
-        change_pct = (
-            ticker.get(
-                "signed_change_rate",
-                0
-            )
-            * 100
-        )
-
-        volume_24h = ticker.get(
-            "acc_trade_volume_24h",
-            0
-        )
-
-        # ----------------------------------------------------
-        # 기본 이상치 제거
-        # ----------------------------------------------------
-
-        if price <= 0:
-
+        if (
+            trade_value
+            < MIN_FINAL_24H_TRADE_VALUE
+        ):
             continue
 
-        if change_pct <= MAX_24H_CRASH:
+        score = fast_candidate_score(item)
 
-            continue
-
-        if change_pct < MIN_24H_CHANGE:
-
-            continue
-
-        # ----------------------------------------------------
-        # 1차 점수
-        # ----------------------------------------------------
-
-        fast_score = 0
-
-        reasons = []
-
-        # 상승률
-
-        if change_pct >= 3:
-
-            fast_score += 15
-
-            reasons.append(
-                "24H 강세"
-            )
-
-        elif change_pct >= 1:
-
-            fast_score += 10
-
-            reasons.append(
-                "24H 상승"
-            )
-
-        elif change_pct >= 0:
-
-            fast_score += 5
-
-            reasons.append(
-                "24H 플러스"
-            )
-
-        # 거래대금
-
-        if trade_value >= 50_000_000_000:
-
-            fast_score += 20
-
-            reasons.append(
-                "거래대금 매우 큼"
-            )
-
-        elif trade_value >= 10_000_000_000:
-
-            fast_score += 15
-
-            reasons.append(
-                "거래대금 충분"
-            )
-
-        elif trade_value >= 3_000_000_000:
-
-            fast_score += 10
-
-            reasons.append(
-                "거래대금 양호"
-            )
-
-        elif trade_value >= MIN_FINAL_24H_TRADE_VALUE:
-
-            fast_score += 5
-
-        # ----------------------------------------------------
-        # 가격 변동
-        # ----------------------------------------------------
-
-        if abs(change_pct) >= 5:
-
-            fast_score += 5
-
-            reasons.append(
-                "강한 변동성"
-            )
-
-        # ----------------------------------------------------
-        # 후보
-        # ----------------------------------------------------
+        change = safe_float(
+            item.get("signed_change_rate")
+        ) * 100
 
         candidates.append({
-
             "market": market,
-
-            "name": market_names[
-                market
-            ],
-
-            "price": price,
-
+            "trade_price": safe_float(
+                item.get("trade_price")
+            ),
+            "change": change,
             "trade_value": trade_value,
-
-            "change_pct": change_pct,
-
-            "volume_24h": volume_24h,
-
-            "fast_score": fast_score,
-
-            "reasons": reasons
+            "fast_score": score
         })
-
-    # --------------------------------------------------------
-    # 전체 시장을 빠른 점수 순으로 정렬
-    # --------------------------------------------------------
 
     candidates.sort(
         key=lambda x: (
             x["fast_score"],
-            x["trade_value"],
-            x["change_pct"]
+            x["trade_value"]
         ),
         reverse=True
     )
-
-    print(
-        f"[MARKET] "
-        f"1차 후보 {len(candidates)}개"
-    )
-
-    # 상위 후보 출력
-
-    preview = candidates[:20]
-
-    print(
-        "\n[TOP CANDIDATES]"
-    )
-
-    for i, item in enumerate(
-        preview,
-        start=1
-    ):
-
-        print(
-            f"{i:02d}. "
-            f"{item['name']} "
-            f"{item['market']} "
-            f"| 24H "
-            f"{item['change_pct']:+.2f}% "
-            f"| Score "
-            f"{item['fast_score']} "
-            f"| "
-            f"{item['trade_value']/100_000_000:.1f}억"
-        )
 
     return candidates
 
 
 # ============================================================
-# DEEP ANALYSIS
+# SIGNAL ID
 # ============================================================
 
-def analyze_coin(
-    ticker,
-    current_price,
-    btc_status
+def get_signal_candle(df15):
+
+    if df15 is None or df15.empty:
+        return ""
+
+    # 마지막 완성된 15분봉
+    index = -2 if len(df15) >= 3 else -1
+
+    return str(
+        df15.iloc[index]["candle_date_time_utc"]
+    )
+
+
+def make_signal_id(
+    market,
+    signal_candle
 ):
 
-    daily = fetch_daily_candles(
-        ticker,
-        80
+    return (
+        f"{market}|"
+        f"{signal_candle}"
     )
-
-    h4 = fetch_candles(
-        ticker,
-        240,
-        100
-    )
-
-    h1 = fetch_candles(
-        ticker,
-        60,
-        100
-    )
-
-    m15 = fetch_candles(
-        ticker,
-        15,
-        100
-    )
-
-    if not all([
-        daily,
-        h4,
-        h1,
-        m15
-    ]):
-
-        return None
-
-    if any(
-        len(x) < 60
-        for x in [
-            daily,
-            h4,
-            h1,
-            m15
-        ]
-    ):
-
-        return None
-
-    d_close = np.array([
-        x["trade_price"]
-        for x in daily
-    ])
-
-    h4_close = np.array([
-        x["trade_price"]
-        for x in h4
-    ])
-
-    h4_high = np.array([
-        x["high_price"]
-        for x in h4
-    ])
-
-    h4_low = np.array([
-        x["low_price"]
-        for x in h4
-    ])
-
-    h1_close = np.array([
-        x["trade_price"]
-        for x in h1
-    ])
-
-    m15_close = np.array([
-        x["trade_price"]
-        for x in m15
-    ])
-
-    m15_volume = np.array([
-        x["candle_acc_trade_volume"]
-        for x in m15
-    ])
-
-    # ========================================================
-    # EMA
-    # ========================================================
-
-    d20 = ema(
-        d_close,
-        20
-    )
-
-    d50 = ema(
-        d_close,
-        50
-    )
-
-    h420 = ema(
-        h4_close,
-        20
-    )
-
-    h450 = ema(
-        h4_close,
-        50
-    )
-
-    h120 = ema(
-        h1_close,
-        20
-    )
-
-    h150 = ema(
-        h1_close,
-        50
-    )
-
-    m1520 = ema(
-        m15_close,
-        20
-    )
-
-    if any(
-        x is None
-        for x in [
-            d20,
-            d50,
-            h420,
-            h450,
-            h120,
-            h150,
-            m1520
-        ]
-    ):
-
-        return None
-
-    score = 0
-
-    reasons = []
-
-    # ========================================================
-    # DAILY
-    # ========================================================
-
-    if d_close[-1] > d20[-1]:
-
-        score += 8
-
-        reasons.append(
-            "1D EMA20 위"
-        )
-
-    else:
-
-        return None
-
-    if d20[-1] > d50[-1]:
-
-        score += 8
-
-        reasons.append(
-            "1D 정배열"
-        )
-
-    else:
-
-        return None
-
-    if d20[-1] > d20[-4]:
-
-        score += 4
-
-        reasons.append(
-            "1D 상승"
-        )
-
-    # ========================================================
-    # 4H
-    # ========================================================
-
-    if h4_close[-1] > h420[-1]:
-
-        score += 8
-
-        reasons.append(
-            "4H EMA20 위"
-        )
-
-    else:
-
-        return None
-
-    if h420[-1] > h450[-1]:
-
-        score += 8
-
-        reasons.append(
-            "4H 정배열"
-        )
-
-    else:
-
-        return None
-
-    if h420[-1] > h420[-4]:
-
-        score += 4
-
-        reasons.append(
-            "4H 상승"
-        )
-
-    # ========================================================
-    # 1H
-    # ========================================================
-
-    if h1_close[-1] > h120[-1]:
-
-        score += 6
-
-        reasons.append(
-            "1H EMA20 위"
-        )
-
-    else:
-
-        return None
-
-    if h120[-1] > h150[-1]:
-
-        score += 5
-
-        reasons.append(
-            "1H 정배열"
-        )
-
-    if h120[-1] > h120[-4]:
-
-        score += 4
-
-        reasons.append(
-            "1H 상승"
-        )
-
-    # ========================================================
-    # 15M
-    # ========================================================
-
-    if m15_close[-1] > m1520[-1]:
-
-        score += 5
-
-        reasons.append(
-            "15M EMA20 위"
-        )
-
-    else:
-
-        return None
-
-    if m1520[-1] > m1520[-4]:
-
-        score += 4
-
-        reasons.append(
-            "15M 상승"
-        )
-
-    # ========================================================
-    # VOLUME
-    # ========================================================
-
-    if len(
-        m15_volume
-    ) < 25:
-
-        return None
-
-    avg_volume = np.mean(
-        m15_volume[-21:-1]
-    )
-
-    if avg_volume <= 0:
-
-        return None
-
-    volume_ratio = (
-        m15_volume[-1]
-        / avg_volume
-    ) * 100
-
-    if volume_ratio < MIN_VOLUME_RATIO:
-
-        return None
-
-    if volume_ratio >= STRONG_VOLUME_RATIO:
-
-        score += 10
-
-        reasons.append(
-            f"거래량 폭증 {volume_ratio:.0f}%"
-        )
-
-    elif volume_ratio >= 220:
-
-        score += 8
-
-        reasons.append(
-            f"거래량 강세 {volume_ratio:.0f}%"
-        )
-
-    else:
-
-        score += 5
-
-        reasons.append(
-            f"거래량 증가 {volume_ratio:.0f}%"
-        )
-
-    # ========================================================
-    # CANDLE
-    # ========================================================
-
-    body_ratio, close_position = (
-        candle_quality(
-            m15[-1]
-        )
-    )
-
-    opening = m15[-1][
-        "opening_price"
-    ]
-
-    closing = m15[-1][
-        "trade_price"
-    ]
-
-    if (
-        closing > opening
-        and
-        body_ratio >= MIN_BODY_RATIO
-        and
-        close_position >= 0.68
-    ):
-
-        score += 8
-
-        reasons.append(
-            "강한 15M 양봉"
-        )
-
-    else:
-
-        return None
-
-    # ========================================================
-    # BREAKOUT
-    # ========================================================
-
-    previous_high = np.max(
-        m15_close[-21:-1]
-    )
-
-    breakout = (
-        m15_close[-1]
-        >= previous_high
-    )
-
-    if breakout:
-
-        score += 8
-
-        reasons.append(
-            "15M 고점 돌파"
-        )
-
-    # ========================================================
-    # SHORT TERM MOMENTUM
-    # ========================================================
-
-    change_1h = (
-        (
-            h1_close[-1]
-            - h1_close[-5]
-        )
-        / h1_close[-5]
-    ) * 100
-
-    change_4h = (
-        (
-            h4_close[-1]
-            - h4_close[-5]
-        )
-        / h4_close[-5]
-    ) * 100
-
-    if (
-        change_1h >= 1.0
-    ):
-
-        score += 4
-
-        reasons.append(
-            "1H 모멘텀"
-        )
-
-    if (
-        change_4h >= 2.0
-    ):
-
-        score += 4
-
-        reasons.append(
-            "4H 모멘텀"
-        )
-
-    # ========================================================
-    # CHASING FILTER
-    # ========================================================
-
-    distance = (
-        (
-            current_price
-            - m1520[-1]
-        )
-        / m1520[-1]
-    ) * 100
-
-    if distance > MAX_ENTRY_DISTANCE_FROM_EMA20:
-
-        return None
-
-    # ========================================================
-    # OVERHEATED FILTER
-    # ========================================================
-
-    if change_4h >= 15:
-
-        return None
-
-    # ========================================================
-    # BTC WEAK
-    # ========================================================
-
-    if btc_status == "WEAK":
-
-        # BTC 약세에서는
-        # 거래량 + 돌파를 반드시 요구
-
-        if (
-            volume_ratio
-            < WEAK_BTC_VOLUME_RATIO
-        ):
-
-            return None
-
-        if not breakout:
-
-            return None
-
-        score += 5
-
-        reasons.append(
-            "BTC 약세 속 상대강도"
-        )
-
-    elif btc_status == "BULL":
-
-        score += 3
-
-        reasons.append(
-            "BTC 강세 환경"
-        )
-
-    elif btc_status == "NEUTRAL":
-
-        reasons.append(
-            "BTC 중립 환경"
-        )
-
-    # ========================================================
-    # FINAL SCORE
-    # ========================================================
-
-    required_score = MIN_SCORE
-
-    if btc_status == "WEAK":
-
-        required_score = (
-            WEAK_BTC_MIN_SCORE
-        )
-
-    if score < required_score:
-
-        return None
-
-    # ========================================================
-    # STOP LOSS
-    # ========================================================
-
-    swing_low = np.min(
-        h4_low[-12:-1]
-    )
-
-    atr_value = atr(
-        h4_high,
-        h4_low,
-        h4_close,
-        14
-    )
-
-    if atr_value is None:
-
-        return None
-
-    stop_loss = round_upbit_tick(
-        swing_low
-        - atr_value * 0.15
-    )
-
-    if stop_loss >= current_price:
-
-        return None
-
-    stop_loss_pct = (
-        (
-            current_price
-            - stop_loss
-        )
-        / current_price
-    ) * 100
-
-    if (
-        stop_loss_pct < MIN_STOP_LOSS_PCT
-        or
-        stop_loss_pct > MAX_STOP_LOSS_PCT
-    ):
-
-        return None
-
-    # ========================================================
-    # TARGETS
-    # ========================================================
-
-    risk = (
-        current_price
-        - stop_loss
-    )
-
-    resistance_1 = np.max(
-        h4_high[-20:-1]
-    )
-
-    resistance_2 = np.max(
-        h4_high[-40:-1]
-    )
-
-    min_tp1 = (
-        current_price
-        + risk * MIN_RR_TP1
-    )
-
-    target_1 = round_upbit_tick(
-        max(
-            resistance_1,
-            min_tp1
-        )
-    )
-
-    tp1_pct = (
-        (
-            target_1
-            - current_price
-        )
-        / current_price
-    ) * 100
-
-    if tp1_pct > MAX_TP1_DISTANCE_PCT:
-
-        return None
-
-    rr_tp1 = (
-        target_1
-        - current_price
-    ) / risk
-
-    if rr_tp1 < MIN_RR_TP1:
-
-        return None
-
-    target_2 = round_upbit_tick(
-        max(
-            resistance_2,
-            current_price
-            + risk * MIN_RR_TP2,
-            target_1 * 1.015
-        )
-    )
-
-    rr_tp2 = (
-        target_2
-        - current_price
-    ) / risk
-
-    target_3 = round_upbit_tick(
-        max(
-            target_2 * 1.025,
-            current_price
-            + risk * 3
-        )
-    )
-
-    rr_tp3 = (
-        target_3
-        - current_price
-    ) / risk
-
-    return {
-
-        "score": score,
-
-        "current_price": current_price,
-
-        "stop_loss": stop_loss,
-
-        "original_stop_loss":
-            stop_loss,
-
-        "target_1": target_1,
-
-        "target_2": target_2,
-
-        "target_3": target_3,
-
-        "tp1_pct": tp1_pct,
-
-        "stop_loss_pct":
-            stop_loss_pct,
-
-        "rr_tp1": rr_tp1,
-
-        "rr_tp2": rr_tp2,
-
-        "rr_tp3": rr_tp3,
-
-        "volume_ratio":
-            volume_ratio,
-
-        "distance_from_ema20":
-            distance,
-
-        "change_1h":
-            change_1h,
-
-        "change_4h":
-            change_4h,
-
-        "breakout":
-            breakout,
-
-        "btc_status":
-            btc_status,
-
-        "candle_time":
-            m15[-1].get(
-                "candle_date_time_kst",
-                ""
-            ),
-
-        "reasons":
-            reasons
-    }
 
 
 # ============================================================
-# DUPLICATE CHECK
+# DUPLICATE PROTECTION
+# ============================================================
+
+def signal_already_sent(
+    cache,
+    signal_id,
+    market
+):
+
+    sent_ids = cache.get(
+        "sent_signal_ids",
+        []
+    )
+
+    if signal_id in sent_ids:
+        return True
+
+    # 현재 포지션 확인
+    position = cache.get(
+        "positions",
+        {}
+    ).get(market)
+
+    if position:
+
+        if position.get(
+            "signal_id"
+        ) == signal_id:
+            return True
+
+    # history 확인
+    for item in cache.get(
+        "history",
+        []
+    ):
+
+        if item.get(
+            "signal_id"
+        ) == signal_id:
+            return True
+
+    return False
+
+
+def remember_signal(
+    cache,
+    signal_id
+):
+
+    cache.setdefault(
+        "sent_signal_ids",
+        []
+    )
+
+    if signal_id not in cache["sent_signal_ids"]:
+
+        cache["sent_signal_ids"].append(
+            signal_id
+        )
+
+    # 최근 500개만 보관
+    if len(
+        cache["sent_signal_ids"]
+    ) > 500:
+
+        cache["sent_signal_ids"] = (
+            cache["sent_signal_ids"][-500:]
+        )
+
+
+# ============================================================
+# NEW SIGNAL COOLDOWN
 # ============================================================
 
 def can_create_new_signal(
-    ticker,
-    result,
-    cache
+    cache,
+    market,
+    price
 ):
 
     positions = cache.get(
@@ -1827,347 +775,964 @@ def can_create_new_signal(
         {}
     )
 
-    if ticker in positions:
-
-        return False
+    if market in positions:
+        return False, "이미 포지션 보유"
 
     history = cache.get(
         "history",
         []
     )
 
-    previous = None
+    now = now_kst()
 
-    for item in reversed(
-        history
-    ):
+    for item in reversed(history):
 
-        if item.get(
-            "ticker"
-        ) == ticker:
-
-            previous = item
-
-            break
-
-    if not previous:
-
-        return True
-
-    previous_time = previous.get(
-        "entry_time"
-    )
-
-    if previous_time:
+        if item.get("market") != market:
+            continue
 
         try:
 
-            previous_dt = (
-                datetime.fromisoformat(
-                    previous_time
+            signal_time = datetime.fromisoformat(
+                item.get("entry_time", "")
+            )
+
+            if signal_time.tzinfo is None:
+                signal_time = signal_time.replace(
+                    tzinfo=KST
                 )
-            )
 
-            now = datetime.now(
-                timezone.utc
-            )
+            hours = (
+                now - signal_time
+            ).total_seconds() / 3600
 
-            elapsed = (
-                now
-                - previous_dt
-            ).total_seconds()
+            if hours < SIGNAL_COOLDOWN_HOURS:
 
-            if elapsed < (
-                SIGNAL_COOLDOWN_HOURS
-                * 3600
-            ):
-
-                return False
+                return (
+                    False,
+                    f"쿨다운 {hours:.1f}h"
+                )
 
         except Exception:
-
             pass
 
-    previous_entry = previous.get(
-        "entry",
-        0
-    )
+        old_price = safe_float(
+            item.get("entry")
+        )
 
-    if previous_entry > 0:
+        if old_price > 0:
 
-        distance = abs(
-            (
-                result[
-                    "current_price"
-                ]
-                - previous_entry
-            )
-            / previous_entry
-        ) * 100
+            distance = abs(
+                price / old_price - 1
+            ) * 100
 
-        if (
-            distance
-            < MIN_NEW_SIGNAL_PRICE_DISTANCE
-        ):
+            if (
+                distance
+                < MIN_NEW_SIGNAL_PRICE_DISTANCE
+            ):
 
-            return False
+                return (
+                    False,
+                    f"가격거리 {distance:.2f}%"
+                )
 
-    return True
+        break
+
+    return True, "OK"
 
 
 # ============================================================
-# CREATE POSITION
+# SCORE ANALYSIS
+# ============================================================
+
+def analyze_coin(
+    market,
+    btc_info
+):
+
+    df1d = get_candles(
+        market,
+        "days",
+        120
+    )
+
+    df4h = get_candles(
+        market,
+        "minutes/240",
+        120
+    )
+
+    df1h = get_candles(
+        market,
+        "minutes/60",
+        120
+    )
+
+    df15 = get_candles(
+        market,
+        "minutes/15",
+        120
+    )
+
+    if any(
+        x is None
+        for x in [df1d, df4h, df1h, df15]
+    ):
+        return None
+
+    if any(
+        len(x) < 60
+        for x in [df1d, df4h, df1h, df15]
+    ):
+        return None
+
+    # --------------------------------------------------------
+    # 완성봉 기준
+    # --------------------------------------------------------
+
+    d = df1d.iloc[:-1]
+    h4 = df4h.iloc[:-1]
+    h1 = df1h.iloc[:-1]
+    m15 = df15.iloc[:-1]
+
+    if any(
+        len(x) < 55
+        for x in [d, h4, h1, m15]
+    ):
+        return None
+
+    # --------------------------------------------------------
+    # EMA
+    # --------------------------------------------------------
+
+    d_ema20 = ema(
+        d["trade_price"],
+        20
+    )
+
+    d_ema50 = ema(
+        d["trade_price"],
+        50
+    )
+
+    h4_ema20 = ema(
+        h4["trade_price"],
+        20
+    )
+
+    h4_ema50 = ema(
+        h4["trade_price"],
+        50
+    )
+
+    h1_ema20 = ema(
+        h1["trade_price"],
+        20
+    )
+
+    h1_ema50 = ema(
+        h1["trade_price"],
+        50
+    )
+
+    m15_ema20 = ema(
+        m15["trade_price"],
+        20
+    )
+
+    # --------------------------------------------------------
+    # 현재값
+    # --------------------------------------------------------
+
+    price = safe_float(
+        m15["trade_price"].iloc[-1]
+    )
+
+    # --------------------------------------------------------
+    # SCORE
+    # --------------------------------------------------------
+
+    score = 0
+    reasons = []
+
+    # ========================================================
+    # 1D TREND = 20
+    # ========================================================
+
+    d_price = d["trade_price"].iloc[-1]
+
+    d_trend = 0
+
+    if d_price > d_ema20.iloc[-1]:
+        d_trend += 10
+        reasons.append("1D EMA20 PASS")
+    else:
+        reasons.append("1D EMA20 FAIL")
+
+    if d_ema20.iloc[-1] > d_ema50.iloc[-1]:
+        d_trend += 5
+        reasons.append("1D 정배열 PASS")
+    else:
+        reasons.append("1D 정배열 FAIL")
+
+    if d_ema20.iloc[-1] > d_ema20.iloc[-4]:
+        d_trend += 5
+        reasons.append("1D 상승 PASS")
+    else:
+        reasons.append("1D 상승 FAIL")
+
+    score += d_trend
+
+    # ========================================================
+    # 4H TREND = 20
+    # ========================================================
+
+    h4_price = h4["trade_price"].iloc[-1]
+
+    h4_trend = 0
+
+    if h4_price > h4_ema20.iloc[-1]:
+        h4_trend += 8
+        reasons.append("4H EMA20 PASS")
+    else:
+        reasons.append("4H EMA20 FAIL")
+
+    if h4_ema20.iloc[-1] > h4_ema50.iloc[-1]:
+        h4_trend += 7
+        reasons.append("4H 정배열 PASS")
+    else:
+        reasons.append("4H 정배열 FAIL")
+
+    if h4_ema20.iloc[-1] > h4_ema20.iloc[-4]:
+        h4_trend += 5
+        reasons.append("4H 상승 PASS")
+    else:
+        reasons.append("4H 상승 FAIL")
+
+    score += h4_trend
+
+    # ========================================================
+    # 1H MOMENTUM = 15
+    # ========================================================
+
+    h1_price = h1["trade_price"].iloc[-1]
+
+    h1_change = (
+        h1_price
+        / h1["trade_price"].iloc[-4]
+        - 1
+    ) * 100
+
+    h1_momentum = 0
+
+    if h1_price > h1_ema20.iloc[-1]:
+        h1_momentum += 6
+        reasons.append("1H EMA20 PASS")
+    else:
+        reasons.append("1H EMA20 FAIL")
+
+    if h1_ema20.iloc[-1] > h1_ema50.iloc[-1]:
+        h1_momentum += 4
+        reasons.append("1H 정배열 PASS")
+    else:
+        reasons.append("1H 정배열 FAIL")
+
+    if h1_change > 0:
+        h1_momentum += 5
+        reasons.append(
+            f"1H 모멘텀 PASS {h1_change:+.2f}%"
+        )
+    else:
+        reasons.append(
+            f"1H 모멘텀 FAIL {h1_change:+.2f}%"
+        )
+
+    score += h1_momentum
+
+    # ========================================================
+    # 15M MOMENTUM = 15
+    # ========================================================
+
+    m15_price = m15["trade_price"].iloc[-1]
+
+    m15_change = (
+        m15_price
+        / m15["trade_price"].iloc[-4]
+        - 1
+    ) * 100
+
+    m15_momentum = 0
+
+    if m15_price > m15_ema20.iloc[-1]:
+        m15_momentum += 7
+        reasons.append("15M EMA20 PASS")
+    else:
+        reasons.append("15M EMA20 FAIL")
+
+    if m15_ema20.iloc[-1] > m15_ema20.iloc[-4]:
+        m15_momentum += 4
+        reasons.append("15M EMA 상승 PASS")
+    else:
+        reasons.append("15M EMA 상승 FAIL")
+
+    if m15_change > 0:
+        m15_momentum += 4
+        reasons.append(
+            f"15M 모멘텀 PASS {m15_change:+.2f}%"
+        )
+    else:
+        reasons.append(
+            f"15M 모멘텀 FAIL {m15_change:+.2f}%"
+        )
+
+    score += m15_momentum
+
+    # ========================================================
+    # VOLUME = 15
+    # ========================================================
+
+    volume_now = safe_float(
+        m15["candle_acc_trade_volume"].iloc[-1]
+    )
+
+    volume_avg = safe_float(
+        m15[
+            "candle_acc_trade_volume"
+        ].iloc[-21:-1].mean()
+    )
+
+    if volume_avg > 0:
+
+        volume_ratio = (
+            volume_now
+            / volume_avg
+        ) * 100
+
+    else:
+        volume_ratio = 0
+
+    volume_score = 0
+
+    if volume_ratio >= 200:
+        volume_score = 15
+
+    elif volume_ratio >= 160:
+        volume_score = 12
+
+    elif volume_ratio >= 130:
+        volume_score = 9
+
+    elif volume_ratio >= 100:
+        volume_score = 5
+
+    reasons.append(
+        f"거래량 {volume_ratio:.0f}% "
+        f"({volume_score}/15)"
+    )
+
+    score += volume_score
+
+    # ========================================================
+    # CANDLE = 10
+    # ========================================================
+
+    candle = m15.iloc[-1]
+
+    candle_open = safe_float(
+        candle["opening_price"]
+    )
+
+    candle_high = safe_float(
+        candle["high_price"]
+    )
+
+    candle_low = safe_float(
+        candle["low_price"]
+    )
+
+    candle_close = safe_float(
+        candle["trade_price"]
+    )
+
+    candle_range = (
+        candle_high - candle_low
+    )
+
+    body = abs(
+        candle_close - candle_open
+    )
+
+    body_ratio = (
+        body / candle_range
+        if candle_range > 0
+        else 0
+    )
+
+    close_position = (
+        (candle_close - candle_low)
+        / candle_range
+        if candle_range > 0
+        else 0
+    )
+
+    candle_score = 0
+
+    if candle_close > candle_open:
+        candle_score += 4
+
+    if body_ratio >= MIN_BODY_RATIO:
+        candle_score += 3
+
+    if close_position >= MIN_CLOSE_POSITION:
+        candle_score += 3
+
+    reasons.append(
+        f"캔들 {candle_score}/10"
+    )
+
+    score += candle_score
+
+    # ========================================================
+    # BREAKOUT = 10
+    # ========================================================
+
+    previous_high = safe_float(
+        m15["high_price"].iloc[-21:-1].max()
+    )
+
+    breakout_score = 0
+
+    if candle_close > previous_high:
+        breakout_score = 10
+        reasons.append(
+            "15M 돌파 PASS"
+        )
+    elif candle_high > previous_high:
+        breakout_score = 5
+        reasons.append(
+            "15M 돌파 근접"
+        )
+    else:
+        reasons.append(
+            "15M 돌파 FAIL"
+        )
+
+    score += breakout_score
+
+    # ========================================================
+    # RSI BONUS / PENALTY
+    # ========================================================
+
+    rsi_value = safe_float(
+        rsi(
+            m15["trade_price"],
+            14
+        ).iloc[-1],
+        50
+    )
+
+    # 너무 과열된 상태만 약간 감점
+    if rsi_value >= 82:
+        score -= 5
+        reasons.append(
+            f"RSI 과열 -5 ({rsi_value:.1f})"
+        )
+
+    elif rsi_value >= 70:
+        reasons.append(
+            f"RSI 강세 ({rsi_value:.1f})"
+        )
+
+    elif rsi_value >= 50:
+        reasons.append(
+            f"RSI 정상 ({rsi_value:.1f})"
+        )
+
+    else:
+        score -= 2
+        reasons.append(
+            f"RSI 약세 -2 ({rsi_value:.1f})"
+        )
+
+    # ========================================================
+    # BTC ENVIRONMENT BONUS
+    # ========================================================
+
+    btc_regime = btc_info["regime"]
+
+    if btc_regime == "BULL":
+        score += 5
+        reasons.append("BTC 상승환경 +5")
+
+    elif btc_regime == "NEUTRAL":
+        reasons.append("BTC 중립")
+
+    elif btc_regime == "WEAK":
+        score -= 3
+        reasons.append("BTC 약세 -3")
+
+    elif btc_regime == "CRASH":
+        score -= 15
+        reasons.append("BTC 급락 -15")
+
+    # ========================================================
+    # 4H CHANGE
+    # ========================================================
+
+    h4_change = (
+        h4["trade_price"].iloc[-1]
+        / h4["trade_price"].iloc[-5]
+        - 1
+    ) * 100
+
+    # 너무 급등한 코인은 추격 방지
+    if h4_change > 18:
+        score -= 8
+        reasons.append(
+            f"4H 과열 -8 ({h4_change:+.2f}%)"
+        )
+
+    # ========================================================
+    # ENTRY DISTANCE
+    # ========================================================
+
+    ema20_now = safe_float(
+        m15_ema20.iloc[-1]
+    )
+
+    entry_distance = (
+        abs(price / ema20_now - 1)
+        * 100
+        if ema20_now > 0
+        else 99
+    )
+
+    if entry_distance > MAX_ENTRY_DISTANCE_FROM_EMA20:
+        score -= 7
+        reasons.append(
+            f"EMA20 거리 과다 -7 "
+            f"({entry_distance:.2f}%)"
+        )
+    else:
+        reasons.append(
+            f"EMA20 거리 OK "
+            f"({entry_distance:.2f}%)"
+        )
+
+    # ========================================================
+    # ATR / RISK
+    # ========================================================
+
+    atr_value = safe_float(
+        atr(
+            m15,
+            14
+        ).iloc[-1]
+    )
+
+    if atr_value <= 0:
+        return None
+
+    # 최근 15M swing low
+    swing_low = safe_float(
+        m15["low_price"].iloc[-12:].min()
+    )
+
+    # ATR 기반 보정
+    stop_price = min(
+        swing_low,
+        price - atr_value * 1.5
+    )
+
+    if stop_price <= 0:
+        return None
+
+    stop_distance = (
+        price - stop_price
+    )
+
+    stop_pct = (
+        stop_distance / price
+    ) * 100
+
+    # SL이 너무 넓으면 감점
+    risk_score = 5
+
+    if stop_pct > MAX_STOP_LOSS_PCT:
+        risk_score = 0
+        reasons.append(
+            f"SL 과다 FAIL {stop_pct:.2f}%"
+        )
+
+    elif stop_pct < MIN_STOP_LOSS_PCT:
+        risk_score = 2
+        reasons.append(
+            f"SL 너무 좁음 {stop_pct:.2f}%"
+        )
+
+    else:
+        reasons.append(
+            f"Risk PASS SL {stop_pct:.2f}%"
+        )
+
+    score += risk_score
+
+    # ========================================================
+    # TARGETS
+    # ========================================================
+
+    tp1 = price + stop_distance * 1.5
+    tp2 = price + stop_distance * 2.0
+    tp3 = price + stop_distance * 3.0
+
+    tp1_pct = (
+        (tp1 / price - 1)
+        * 100
+    )
+
+    if tp1_pct > MAX_TP1_DISTANCE_PCT:
+        score -= 8
+        reasons.append(
+            f"TP1 거리 과다 -8 "
+            f"{tp1_pct:.2f}%"
+        )
+
+    # ========================================================
+    # SIGNAL CANDLE
+    # ========================================================
+
+    signal_candle = get_signal_candle(
+        df15
+    )
+
+    # ========================================================
+    # BTC CRASH SPECIAL RULE
+    # ========================================================
+
+    if btc_regime == "CRASH":
+
+        # BTC 급락 중에는 아주 강한 상대강도만 허용
+        if score < 88:
+            reasons.append(
+                "BTC CRASH → 최소 88점 필요"
+            )
+
+            return {
+                "score": score,
+                "signal": False,
+                "reason": reasons,
+                "price": price,
+                "stop": stop_price,
+                "tp1": tp1,
+                "tp2": tp2,
+                "tp3": tp3,
+                "stop_pct": stop_pct,
+                "tp1_pct": tp1_pct,
+                "volume_ratio": volume_ratio,
+                "h1_change": h1_change,
+                "h4_change": h4_change,
+                "rsi": rsi_value,
+                "signal_candle": signal_candle
+            }
+
+    # ========================================================
+    # FINAL SIGNAL
+    # ========================================================
+
+    minimum_score = SIGNAL_SCORE
+
+    if btc_regime == "WEAK":
+        minimum_score = WEAK_BTC_SCORE
+
+    signal = (
+        score >= minimum_score
+        and stop_pct <= MAX_STOP_LOSS_PCT
+        and tp1_pct <= MAX_TP1_DISTANCE_PCT
+    )
+
+    return {
+        "score": int(score),
+        "signal": signal,
+        "reason": reasons,
+        "price": price,
+        "stop": stop_price,
+        "tp1": tp1,
+        "tp2": tp2,
+        "tp3": tp3,
+        "stop_pct": stop_pct,
+        "tp1_pct": tp1_pct,
+        "volume_ratio": volume_ratio,
+        "h1_change": h1_change,
+        "h4_change": h4_change,
+        "rsi": rsi_value,
+        "signal_candle": signal_candle
+    }
+
+
+# ============================================================
+# PRICE ROUNDING
+# ============================================================
+
+def round_upbit_tick(price):
+
+    if price >= 2_000_000:
+        unit = 1000
+
+    elif price >= 1_000_000:
+        unit = 500
+
+    elif price >= 500_000:
+        unit = 100
+
+    elif price >= 100_000:
+        unit = 50
+
+    elif price >= 10_000:
+        unit = 10
+
+    elif price >= 1_000:
+        unit = 5
+
+    elif price >= 100:
+        unit = 1
+
+    elif price >= 10:
+        unit = 0.1
+
+    elif price >= 1:
+        unit = 0.01
+
+    elif price >= 0.1:
+        unit = 0.001
+
+    elif price >= 0.01:
+        unit = 0.0001
+
+    elif price >= 0.001:
+        unit = 0.00001
+
+    else:
+        unit = 0.000001
+
+    return round(
+        round(price / unit) * unit,
+        8
+    )
+
+
+# ============================================================
+# POSITION
 # ============================================================
 
 def create_position(
     item,
     result,
+    btc_info,
     cache
 ):
 
-    ticker = item[
-        "market"
+    market = item["market"]
+
+    price = result["price"]
+
+    signal_candle = result[
+        "signal_candle"
     ]
 
-    name = item[
-        "name"
-    ]
+    signal_id = make_signal_id(
+        market,
+        signal_candle
+    )
 
-    trade_value = item[
-        "trade_value"
-    ]
+    # --------------------------------------------------------
+    # 최종 중복 방어
+    # --------------------------------------------------------
 
-    entry = result[
-        "current_price"
-    ]
+    # 최신 cache 다시 확인
+    fresh_cache = load_cache()
 
-    now = datetime.now(
-        timezone.utc
-    ).isoformat()
+    if signal_already_sent(
+        fresh_cache,
+        signal_id,
+        market
+    ):
+
+        print(
+            f"[DUPLICATE BLOCK] "
+            f"{market} | {signal_id}"
+        )
+
+        return False
+
+    # 현재 포지션
+    if market in fresh_cache.get(
+        "positions",
+        {}
+    ):
+
+        print(
+            f"[POSITION BLOCK] {market}"
+        )
+
+        return False
+
+    # 가격 쿨다운
+    allowed, reason = can_create_new_signal(
+        fresh_cache,
+        market,
+        price
+    )
+
+    if not allowed:
+
+        print(
+            f"[SIGNAL BLOCK] "
+            f"{market} | {reason}"
+        )
+
+        return False
+
+    # --------------------------------------------------------
+    # 다시 저장
+    # --------------------------------------------------------
+
+    cache = fresh_cache
+
+    entry = round_upbit_tick(
+        price
+    )
+
+    stop = round_upbit_tick(
+        result["stop"]
+    )
+
+    tp1 = round_upbit_tick(
+        result["tp1"]
+    )
+
+    tp2 = round_upbit_tick(
+        result["tp2"]
+    )
+
+    tp3 = round_upbit_tick(
+        result["tp3"]
+    )
+
+    now = now_kst().isoformat()
 
     position = {
-
-        "ticker":
-            ticker,
-
-        "korean_name":
-            name,
-
-        "entry":
-            entry,
-
-        "original_sl":
-            result[
-                "original_stop_loss"
-            ],
-
-        "current_sl":
-            result[
-                "stop_loss"
-            ],
-
-        "tp1":
-            result[
-                "target_1"
-            ],
-
-        "tp2":
-            result[
-                "target_2"
-            ],
-
-        "tp3":
-            result[
-                "target_3"
-            ],
-
-        "score":
-            result[
-                "score"
-            ],
-
-        "volume_ratio":
-            result[
-                "volume_ratio"
-            ],
-
-        "rr_tp1":
-            result[
-                "rr_tp1"
-            ],
-
-        "rr_tp2":
-            result[
-                "rr_tp2"
-            ],
-
-        "rr_tp3":
-            result[
-                "rr_tp3"
-            ],
-
-        "stage":
-            "ENTRY",
-
-        "entry_time":
-            now,
-
-        "signal_candle":
-            result[
-                "candle_time"
-            ],
-
-        "btc_status":
-            result[
-                "btc_status"
-            ]
+        "market": market,
+        "entry": entry,
+        "stop": stop,
+        "original_stop": stop,
+        "tp1": tp1,
+        "tp2": tp2,
+        "tp3": tp3,
+        "stage": "ENTRY",
+        "entry_time": now,
+        "signal_candle": signal_candle,
+        "signal_id": signal_id,
+        "score": result["score"],
+        "btc_regime": btc_info["regime"],
+        "btc_score": btc_info["score"]
     }
 
-    cache[
-        "positions"
-    ][ticker] = position
+    cache.setdefault(
+        "positions",
+        {}
+    )[market] = position
 
-    save_cache(
-        cache
+    remember_signal(
+        cache,
+        signal_id
     )
 
-    volume_ratio = result[
-        "volume_ratio"
-    ]
+    # --------------------------------------------------------
+    # HISTORY에도 ID 기록
+    # --------------------------------------------------------
 
-    if volume_ratio >= 300:
-
-        volume_text = (
-            "💥 폭발"
-        )
-
-    elif volume_ratio >= 220:
-
-        volume_text = (
-            "🔥 강한 유입"
-        )
-
-    else:
-
-        volume_text = (
-            "⚡ 증가"
-        )
-
-    btc_status = result[
-        "btc_status"
-    ]
-
-    if btc_status == "BULL":
-
-        btc_text = "🟢 강세"
-
-    elif btc_status == "NEUTRAL":
-
-        btc_text = "🟡 중립"
-
-    elif btc_status == "WEAK":
-
-        btc_text = (
-            "🟠 약세 속 개별강세"
-        )
-
-    else:
-
-        btc_text = "⚪ 확인불가"
-
-    breakout_text = (
-        "고점 돌파"
-        if result["breakout"]
-        else
-        "추세 강화"
+    cache.setdefault(
+        "history",
+        []
     )
 
-    reasons = ", ".join(
-        result["reasons"]
+    cache["history"].append({
+        "market": market,
+        "entry": entry,
+        "entry_time": now,
+        "signal_candle": signal_candle,
+        "signal_id": signal_id,
+        "score": result["score"],
+        "status": "OPEN"
+    })
+
+    # --------------------------------------------------------
+    # 상태 먼저 저장
+    # --------------------------------------------------------
+
+    save_cache(cache)
+
+    # --------------------------------------------------------
+    # TELEGRAM
+    # --------------------------------------------------------
+
+    coin_name = market.replace(
+        "KRW-",
+        ""
     )
 
-    upbit_url = (
-        "https://upbit.com/exchange"
-        f"?code=CRIX.UPBIT.{ticker}"
+    trade_value_eok = (
+        item["trade_value"]
+        / 100_000_000
     )
 
     message = (
-
-        f"🚀 *[UPBIT BUY SIGNAL]*\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-
-        f"▪ 코인: "
-        f"`{name} ({ticker})`\n"
-
-        f"▪ ENTRY: "
-        f"`{format_price(entry)}원`\n"
-
+        "🚀 *[UPBIT BUY SIGNAL]*\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"▪ 코인: *{coin_name}*\n"
+        f"▪ ENTRY: `{entry}`원\n"
         f"▪ 24H 거래대금: "
-        f"`{trade_value / 100_000_000:,.1f}억`\n"
-
+        f"`{trade_value_eok:.1f}억`\n"
         f"▪ 24H 변화: "
-        f"`{item['change_pct']:+.2f}%`\n\n"
+        f"`{item['change']:+.2f}%`\n\n"
 
-        f"🌐 *MARKET*\n"
+        "🌐 *MARKET*\n"
+        f"▪ BTC: {btc_icon(btc_info['regime'])} "
+        f"{btc_info['regime']}\n"
+        f"▪ BTC Score: `{btc_info['score']}`\n\n"
 
-        f"▪ BTC: "
-        f"`{btc_text}`\n"
-
-        f"▪ 상태: "
-        f"`{breakout_text}`\n\n"
-
-        f"📊 *SIGNAL QUALITY*\n"
-
-        f"▪ Score: "
-        f"`{result['score']}/100`\n"
-
+        "📊 *SIGNAL QUALITY*\n"
+        f"▪ Score: *{result['score']}/100*\n"
         f"▪ 15M 거래량: "
-        f"`{volume_ratio:.0f}%` "
-        f"{volume_text}\n"
-
+        f"`{result['volume_ratio']:.0f}%`\n"
         f"▪ 1H 변화: "
-        f"`{result['change_1h']:+.2f}%`\n"
-
+        f"`{result['h1_change']:+.2f}%`\n"
         f"▪ 4H 변화: "
-        f"`{result['change_4h']:+.2f}%`\n\n"
+        f"`{result['h4_change']:+.2f}%`\n"
+        f"▪ RSI: `{result['rsi']:.1f}`\n\n"
 
-        f"🎯 *TARGETS*\n"
+        "🎯 *TARGETS*\n"
+        f"▪ TP1: `{tp1}`원 "
+        f"(+{((tp1 / entry) - 1) * 100:.1f}%)\n"
+        f"▪ TP2: `{tp2}`원\n"
+        f"▪ TP3: `{tp3}`원\n\n"
 
-        f"▪ TP1: "
-        f"`{format_price(result['target_1'])}원` "
-        f"(+{result['tp1_pct']:.1f}%)\n"
+        "🛡️ *RISK*\n"
+        f"▪ SL: `{stop}`원 "
+        f"(-{((entry - stop) / entry) * 100:.1f}%)\n"
+        "▪ TP1 R:R: `1:1.5`\n"
+        "▪ TP2 R:R: `1:2.0`\n"
+        "▪ TP3 R:R: `1:3.0`\n\n"
 
-        f"▪ TP2: "
-        f"`{format_price(result['target_2'])}원`\n"
+        "🔎 *SIGNAL*\n"
+        "강한 추세 + 모멘텀 + 거래량 + "
+        "리스크 조건 종합\n\n"
 
-        f"▪ TP3: "
-        f"`{format_price(result['target_3'])}원`\n\n"
+        f"🕒 Signal Candle\n"
+        f"`{signal_candle}`\n\n"
 
-        f"🛡️ *RISK*\n"
-
-        f"▪ SL: "
-        f"`{format_price(result['stop_loss'])}원` "
-        f"(-{result['stop_loss_pct']:.1f}%)\n"
-
-        f"▪ TP1 R:R: "
-        f"`1:{result['rr_tp1']:.1f}`\n"
-
-        f"▪ TP2 R:R: "
-        f"`1:{result['rr_tp2']:.1f}`\n"
-
-        f"▪ TP3 R:R: "
-        f"`1:{result['rr_tp3']:.1f}`\n\n"
-
-        f"🔎 *CONFIRMATION*\n"
-        f"`{reasons}`\n\n"
-
-        f"📱 [업비트 차트]({upbit_url})\n"
-
-        f"━━━━━━━━━━━━━━━━━━\n"
-
-        f"📌 TP1 도달 → SL ENTRY\n"
-        f"📌 TP2 도달 → SL TP1\n"
-        f"📌 TP3 도달 → 추적 종료"
+        "📌 TP1 도달 → SL ENTRY\n"
+        "📌 TP2 도달 → SL TP1\n"
+        "📌 TP3 도달 → 추적 종료"
     )
 
     sent = send_telegram_message(
@@ -2177,103 +1742,344 @@ def create_position(
     if sent:
 
         print(
-            f"  📲 TELEGRAM SIGNAL SENT "
-            f"{ticker}"
+            f"[NEW SIGNAL] "
+            f"{market} | "
+            f"Score {result['score']}"
         )
 
     else:
 
         print(
-            f"  ❌ TELEGRAM SEND FAILED "
-            f"{ticker}"
+            f"[SIGNAL CREATED / TELEGRAM FAIL] "
+            f"{market}"
         )
 
+    return True
 
-# ============================================================
-# NEW SIGNAL SCAN
-# ============================================================
 
-def scan_new_signals(cache):
+def btc_icon(regime):
 
-    # ========================================================
-    # BTC
-    # ========================================================
+    icons = {
+        "BULL": "🟢",
+        "NEUTRAL": "🟡",
+        "WEAK": "🟠",
+        "CRASH": "🔴"
+    }
 
-    btc = check_btc_market()
-
-    btc_status = btc.get(
-        "status",
-        "UNKNOWN"
+    return icons.get(
+        regime,
+        "⚪"
     )
+
+
+# ============================================================
+# TRACKING
+# ============================================================
+
+def track_positions(cache):
+
+    positions = cache.get(
+        "positions",
+        {}
+    )
+
+    if not positions:
+
+        print("[TRACKING] 포지션 없음")
+        return
 
     print(
-        f"\n[BTC] "
-        f"{btc.get('reason', 'UNKNOWN')}"
+        f"[TRACKING] "
+        f"{len(positions)}개 포지션"
     )
 
-    # ========================================================
-    # CRASH
-    # ========================================================
+    closed_markets = []
 
-    if btc_status == "CRASH":
+    for market, pos in list(
+        positions.items()
+    ):
 
-        print(
-            "🚫 BTC 급락"
+        try:
+
+            df = get_candles(
+                market,
+                "minutes/1",
+                5
+            )
+
+            if df is None or df.empty:
+                continue
+
+            candle = df.iloc[-1]
+
+            high = safe_float(
+                candle["high_price"]
+            )
+
+            low = safe_float(
+                candle["low_price"]
+            )
+
+            entry = safe_float(
+                pos["entry"]
+            )
+
+            stop = safe_float(
+                pos["stop"]
+            )
+
+            tp1 = safe_float(
+                pos["tp1"]
+            )
+
+            tp2 = safe_float(
+                pos["tp2"]
+            )
+
+            tp3 = safe_float(
+                pos["tp3"]
+            )
+
+            stage = pos.get(
+                "stage",
+                "ENTRY"
+            )
+
+            # ------------------------------------------------
+            # STOP FIRST
+            # ------------------------------------------------
+
+            if low <= stop:
+
+                if stage == "ENTRY":
+                    result = "STOP_LOSS"
+                else:
+                    result = "PROTECTED"
+
+                send_tracking_message(
+                    market,
+                    pos,
+                    result,
+                    stop
+                )
+
+                add_history_result(
+                    cache,
+                    pos,
+                    result,
+                    stop
+                )
+
+                closed_markets.append(
+                    market
+                )
+
+                continue
+
+            # ------------------------------------------------
+            # TP1
+            # ------------------------------------------------
+
+            if (
+                stage == "ENTRY"
+                and high >= tp1
+            ):
+
+                pos["stage"] = "TP1"
+
+                if MOVE_SL_TO_ENTRY_AFTER_TP1:
+                    pos["stop"] = entry
+
+                send_tracking_message(
+                    market,
+                    pos,
+                    "TP1",
+                    tp1
+                )
+
+                continue
+
+            # ------------------------------------------------
+            # TP2
+            # ------------------------------------------------
+
+            if (
+                stage == "TP1"
+                and high >= tp2
+            ):
+
+                pos["stage"] = "TP2"
+
+                if MOVE_SL_TO_TP1_AFTER_TP2:
+                    pos["stop"] = tp1
+
+                send_tracking_message(
+                    market,
+                    pos,
+                    "TP2",
+                    tp2
+                )
+
+                continue
+
+            # ------------------------------------------------
+            # TP3
+            # ------------------------------------------------
+
+            if (
+                stage == "TP2"
+                and high >= tp3
+            ):
+
+                send_tracking_message(
+                    market,
+                    pos,
+                    "TP3",
+                    tp3
+                )
+
+                add_history_result(
+                    cache,
+                    pos,
+                    "TP3",
+                    tp3
+                )
+
+                closed_markets.append(
+                    market
+                )
+
+        except Exception as e:
+
+            print(
+                f"[TRACK ERROR] "
+                f"{market}: {e}"
+            )
+
+    for market in closed_markets:
+
+        positions.pop(
+            market,
+            None
         )
 
-        print(
-            "신규 진입 차단"
-        )
+    save_cache(cache)
 
-        return
 
-    if btc_status == "UNKNOWN":
+def send_tracking_message(
+    market,
+    pos,
+    event,
+    price
+):
 
-        print(
-            "🚫 BTC 상태 확인 실패"
-        )
-
-        return
-
-    if btc_status == "WEAK":
-
-        print(
-            "⚠️ BTC 약세"
-        )
-
-        print(
-            "개별 강세 코인만 허용"
-        )
-
-    elif btc_status == "NEUTRAL":
-
-        print(
-            "🟡 BTC 중립"
-        )
-
-    elif btc_status == "BULL":
-
-        print(
-            "🟢 BTC 강세"
-        )
-
-    # ========================================================
-    # ALL MARKETS
-    # ========================================================
-
-    market_names = get_market_names()
-
-    if not market_names:
-
-        print(
-            "[ERROR] KRW 마켓 조회 실패"
-        )
-
-        return
-
-    markets = list(
-        market_names.keys()
+    message = (
+        f"📊 *[POSITION UPDATE]*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"▪ 코인: *{market}*\n"
+        f"▪ 이벤트: *{event}*\n"
+        f"▪ 가격: `{price}`원\n"
+        f"▪ ENTRY: `{pos['entry']}`원\n"
+        f"▪ 현재 SL: `{pos['stop']}`원\n"
+        f"▪ Stage: `{pos.get('stage', 'ENTRY')}`"
     )
+
+    send_telegram_message(
+        message
+    )
+
+
+def add_history_result(
+    cache,
+    pos,
+    result,
+    exit_price
+):
+
+    history = cache.setdefault(
+        "history",
+        []
+    )
+
+    for item in reversed(history):
+
+        if item.get(
+            "signal_id"
+        ) == pos.get(
+            "signal_id"
+        ):
+
+            item["status"] = result
+            item["exit"] = exit_price
+            item["exit_time"] = (
+                now_kst().isoformat()
+            )
+
+            break
+
+    # 기존 형식과 호환
+    if not any(
+        x.get("signal_id")
+        == pos.get("signal_id")
+        for x in history
+    ):
+
+        history.append({
+            "market": pos["market"],
+            "entry": pos["entry"],
+            "exit": exit_price,
+            "entry_time": pos["entry_time"],
+            "exit_time": now_kst().isoformat(),
+            "signal_candle": pos.get(
+                "signal_candle",
+                ""
+            ),
+            "signal_id": pos.get(
+                "signal_id",
+                ""
+            ),
+            "status": result,
+            "score": pos.get(
+                "score",
+                0
+            )
+        })
+
+
+# ============================================================
+# DEEP SCAN
+# ============================================================
+
+def scan_new_signals(
+    cache
+):
+
+    print(
+        "\n[STEP 2] "
+        "업비트 전체 시장 신규 신호 탐색"
+    )
+
+    btc_info = check_btc_market()
+
+    print(
+        f"\n[BTC] BTC "
+        f"{btc_info['regime']} / "
+        f"Score {btc_info['score']}"
+    )
+
+    if btc_info["regime"] == "BULL":
+        print("🟢 BTC 상승 환경")
+
+    elif btc_info["regime"] == "NEUTRAL":
+        print("🟡 BTC 중립")
+
+    elif btc_info["regime"] == "WEAK":
+        print("🟠 BTC 약세")
+
+    else:
+        print("🔴 BTC 급락")
+
+    markets = get_market_names()
 
     print(
         f"\n[SCAN] "
@@ -2281,42 +2087,51 @@ def scan_new_signals(cache):
         f"{len(markets)}개 마켓"
     )
 
-    # ========================================================
-    # ALL TICKERS
-    # ========================================================
+    if not markets:
+        return
 
     tickers = get_all_tickers(
         markets
     )
 
-    if not tickers:
-
-        print(
-            "[ERROR] ticker 조회 실패"
-        )
-
-        return
-
-    # ========================================================
-    # FAST SCAN
-    # ========================================================
+    print(
+        f"\n[MARKET] "
+        f"전체 KRW 마켓 "
+        f"{len(tickers)}개 확인"
+    )
 
     candidates = build_candidates(
-        tickers,
-        market_names
+        tickers
+    )
+
+    print(
+        f"[MARKET] "
+        f"1차 후보 "
+        f"{len(candidates)}개"
     )
 
     if not candidates:
-
         print(
             "[SCAN] 후보 없음"
         )
-
         return
 
-    # ========================================================
-    # DEEP SCAN
-    # ========================================================
+    print("\n[TOP CANDIDATES]")
+
+    for i, item in enumerate(
+        candidates[:20],
+        1
+    ):
+
+        print(
+            f"{i:02d}. "
+            f"{item['market']} | "
+            f"24H "
+            f"{item['change']:+.2f}% | "
+            f"Score "
+            f"{item['fast_score']} | "
+            f"{item['trade_value']/100_000_000:.1f}억"
+        )
 
     deep_candidates = candidates[
         :MAX_DEEP_SCAN
@@ -2324,123 +2139,147 @@ def scan_new_signals(cache):
 
     print(
         f"\n[DEEP SCAN] "
-        f"{len(deep_candidates)}개 정밀분석"
+        f"{len(deep_candidates)}개 "
+        f"정밀분석"
     )
 
-    signal_count = 0
+    final_signals = 0
+    failed = 0
 
-    rejected_count = 0
+    # --------------------------------------------------------
+    # 중복 후보 제거
+    # --------------------------------------------------------
 
-    for index, item in enumerate(
-        deep_candidates,
-        start=1
+    seen_markets = set()
+
+    unique_candidates = []
+
+    for item in deep_candidates:
+
+        market = item["market"]
+
+        if market in seen_markets:
+            continue
+
+        seen_markets.add(market)
+
+        unique_candidates.append(
+            item
+        )
+
+    # --------------------------------------------------------
+    # DEEP ANALYSIS
+    # --------------------------------------------------------
+
+    for idx, item in enumerate(
+        unique_candidates,
+        1
     ):
 
-        ticker = item[
-            "market"
-        ]
-
-        name = item[
-            "name"
-        ]
-
-        price = item[
-            "price"
-        ]
+        market = item["market"]
 
         print(
-            f"[{index}/{len(deep_candidates)}] "
-            f"{name} {ticker} "
-            f"| 24H "
-            f"{item['change_pct']:+.2f}% "
-            f"| FAST "
-            f"{item['fast_score']}"
+            f"\n[{idx}/{len(unique_candidates)}] "
+            f"{market} | "
+            f"24H {item['change']:+.2f}% | "
+            f"FAST {item['fast_score']}"
         )
 
         try:
 
             result = analyze_coin(
-                ticker,
-                price,
-                btc_status
+                market,
+                btc_info
             )
 
-            if not result:
-
-                rejected_count += 1
+            if result is None:
 
                 print(
-                    "   → 정밀조건 FAIL"
+                    "   → 데이터 부족"
                 )
 
-                time.sleep(
-                    0.10
-                )
-
+                failed += 1
                 continue
 
             print(
-                f"   → "
-                f"FINAL SCORE "
-                f"{result['score']} "
-                f"| VOL "
-                f"{result['volume_ratio']:.0f}% "
-                f"| RR "
-                f"{result['rr_tp1']:.2f}"
+                f"   → SCORE "
+                f"{result['score']}"
             )
 
+            # 조건 요약
+            for reason in result[
+                "reason"
+            ]:
+
+                print(
+                    f"      {reason}"
+                )
+
+            if not result["signal"]:
+
+                print(
+                    "   → 최종 SIGNAL FAIL"
+                )
+
+                failed += 1
+
+                continue
+
             # ------------------------------------------------
-            # Duplicate
+            # SIGNAL
             # ------------------------------------------------
 
-            if not can_create_new_signal(
-                ticker,
-                result,
-                cache
+            signal_id = make_signal_id(
+                market,
+                result[
+                    "signal_candle"
+                ]
+            )
+
+            if signal_already_sent(
+                cache,
+                signal_id,
+                market
             ):
 
                 print(
-                    "   → "
-                    "중복/쿨다운"
+                    "   → DUPLICATE BLOCK"
                 )
 
                 continue
 
-            # ------------------------------------------------
-            # FINAL SIGNAL
-            # ------------------------------------------------
-
-            create_position(
+            created = create_position(
                 item,
                 result,
+                btc_info,
                 cache
             )
 
-            signal_count += 1
+            if created:
 
-            print(
-                f"   🚀 "
-                f"FINAL SIGNAL "
-                f"{ticker}"
-            )
+                final_signals += 1
+
+            # API 보호
+            time.sleep(0.2)
 
         except Exception as e:
 
             print(
-                f"   [ANALYSIS ERROR] "
-                f"{ticker}: {e}"
+                f"   → 분석 오류: {e}"
             )
 
-        time.sleep(
-            0.12
-        )
+            failed += 1
+
+    # --------------------------------------------------------
+    # SUMMARY
+    # --------------------------------------------------------
 
     print(
-        "\n=========================================="
+        "\n" + "=" * 42
     )
 
     print(
-        f"[SCAN COMPLETE]"
+        "[SCAN COMPLETE]"
     )
 
     print(
@@ -2455,568 +2294,21 @@ def scan_new_signals(cache):
 
     print(
         f"정밀 분석: "
-        f"{len(deep_candidates)}"
+        f"{len(unique_candidates)}"
     )
 
     print(
         f"최종 신호: "
-        f"{signal_count}"
+        f"{final_signals}"
     )
 
     print(
-        f"정밀 탈락: "
-        f"{rejected_count}"
+        f"정밀 탈락/실패: "
+        f"{failed}"
     )
 
     print(
-        "=========================================="
-    )
-
-
-# ============================================================
-# 1M CANDLES
-# ============================================================
-
-def get_recent_1m_candles(
-    ticker,
-    count=10
-):
-
-    data = api_get(
-        "/candles/minutes/1",
-        {
-            "market": ticker,
-            "count": count
-        }
-    )
-
-    if not isinstance(
-        data,
-        list
-    ):
-
-        return []
-
-    data.reverse()
-
-    return data
-
-
-# ============================================================
-# TRACK POSITIONS
-# ============================================================
-
-def track_positions(cache):
-
-    positions = cache.get(
-        "positions",
-        {}
-    )
-
-    if not positions:
-
-        print(
-            "[TRACKING] "
-            "현재 추적 중인 종목 없음"
-        )
-
-        return
-
-    print(
-        f"[TRACKING] "
-        f"{len(positions)}개 포지션"
-    )
-
-    completed = []
-
-    for ticker in list(
-        positions.keys()
-    ):
-
-        position = positions[
-            ticker
-        ]
-
-        try:
-
-            ticker_data = api_get(
-                "/ticker",
-                {
-                    "markets":
-                    ticker
-                }
-            )
-
-            if (
-                not isinstance(
-                    ticker_data,
-                    list
-                )
-                or
-                not ticker_data
-            ):
-
-                continue
-
-            current_price = (
-                ticker_data[0]
-                ["trade_price"]
-            )
-
-            candles = (
-                get_recent_1m_candles(
-                    ticker,
-                    10
-                )
-            )
-
-            if not candles:
-
-                continue
-
-            entry = position[
-                "entry"
-            ]
-
-            tp1 = position[
-                "tp1"
-            ]
-
-            tp2 = position[
-                "tp2"
-            ]
-
-            tp3 = position[
-                "tp3"
-            ]
-
-            sl = position[
-                "current_sl"
-            ]
-
-            stage = position.get(
-                "stage",
-                "ENTRY"
-            )
-
-            hit_sl = False
-            hit_tp1 = False
-            hit_tp2 = False
-            hit_tp3 = False
-
-            for candle in candles:
-
-                high = candle[
-                    "high_price"
-                ]
-
-                low = candle[
-                    "low_price"
-                ]
-
-                if low <= sl:
-
-                    hit_sl = True
-
-                if high >= tp1:
-
-                    hit_tp1 = True
-
-                if high >= tp2:
-
-                    hit_tp2 = True
-
-                if high >= tp3:
-
-                    hit_tp3 = True
-
-            # =================================================
-            # SL
-            # =================================================
-
-            if hit_sl:
-
-                pnl_pct = (
-                    (
-                        sl - entry
-                    )
-                    / entry
-                ) * 100
-
-                if stage == "ENTRY":
-
-                    result_type = (
-                        "STOP_LOSS"
-                    )
-
-                    emoji = "🛑"
-
-                else:
-
-                    result_type = (
-                        "PROTECTED"
-                    )
-
-                    emoji = "🛡️"
-
-                message = (
-
-                    f"{emoji} *[POSITION CLOSED]*\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-
-                    f"▪ 자산: `{ticker}`\n"
-
-                    f"▪ ENTRY: "
-                    f"`{format_price(entry)}원`\n"
-
-                    f"▪ EXIT: "
-                    f"`{format_price(sl)}원`\n"
-
-                    f"▪ 결과: "
-                    f"`{result_type}`\n"
-
-                    f"▪ 손익률: "
-                    f"`{pnl_pct:+.2f}%`\n"
-
-                    f"▪ 단계: "
-                    f"`{stage}`\n"
-
-                    f"━━━━━━━━━━━━━━━━━━"
-                )
-
-                send_telegram_message(
-                    message
-                )
-
-                record_history(
-                    cache,
-                    ticker,
-                    position,
-                    result_type,
-                    sl,
-                    pnl_pct
-                )
-
-                completed.append(
-                    ticker
-                )
-
-                continue
-
-            # =================================================
-            # TP3
-            # =================================================
-
-            if (
-                hit_tp3
-                and
-                stage != "TP3"
-            ):
-
-                pnl_pct = (
-                    (
-                        tp3 - entry
-                    )
-                    / entry
-                ) * 100
-
-                message = (
-
-                    f"🏆 *[TP3 FINAL]*\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-
-                    f"▪ 자산: `{ticker}`\n"
-
-                    f"▪ ENTRY: "
-                    f"`{format_price(entry)}원`\n"
-
-                    f"▪ TP3: "
-                    f"`{format_price(tp3)}원`\n"
-
-                    f"▪ 수익률: "
-                    f"`+{pnl_pct:.2f}%`\n\n"
-
-                    f"🎯 TP1 / TP2 / TP3 완료\n"
-                    f"📌 추적 종료"
-                )
-
-                send_telegram_message(
-                    message
-                )
-
-                record_history(
-                    cache,
-                    ticker,
-                    position,
-                    "TP3",
-                    tp3,
-                    pnl_pct
-                )
-
-                completed.append(
-                    ticker
-                )
-
-                continue
-
-            # =================================================
-            # TP2
-            # =================================================
-
-            if (
-                hit_tp2
-                and
-                stage == "TP1"
-            ):
-
-                pnl_pct = (
-                    (
-                        tp2 - entry
-                    )
-                    / entry
-                ) * 100
-
-                position[
-                    "stage"
-                ] = "TP2"
-
-                if MOVE_SL_TO_TP1_AFTER_TP2:
-
-                    position[
-                        "current_sl"
-                    ] = tp1
-
-                message = (
-
-                    f"🎯 *[TP2 REACHED]*\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-
-                    f"▪ 자산: `{ticker}`\n"
-
-                    f"▪ TP2: "
-                    f"`{format_price(tp2)}원`\n"
-
-                    f"▪ 수익률: "
-                    f"`+{pnl_pct:.2f}%`\n"
-
-                    f"▪ 보호 SL: "
-                    f"`{format_price(tp1)}원`\n\n"
-
-                    f"➡️ TP3 계속 추적"
-                )
-
-                send_telegram_message(
-                    message
-                )
-
-                continue
-
-            # =================================================
-            # TP1
-            # =================================================
-
-            if (
-                hit_tp1
-                and
-                stage == "ENTRY"
-            ):
-
-                pnl_pct = (
-                    (
-                        tp1 - entry
-                    )
-                    / entry
-                ) * 100
-
-                position[
-                    "stage"
-                ] = "TP1"
-
-                if MOVE_SL_TO_ENTRY_AFTER_TP1:
-
-                    position[
-                        "current_sl"
-                    ] = entry
-
-                message = (
-
-                    f"🎯 *[TP1 REACHED]*\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-
-                    f"▪ 자산: `{ticker}`\n"
-
-                    f"▪ TP1: "
-                    f"`{format_price(tp1)}원`\n"
-
-                    f"▪ 수익률: "
-                    f"`+{pnl_pct:.2f}%`\n"
-
-                    f"▪ 보호 SL: "
-                    f"`{format_price(entry)}원`\n\n"
-
-                    f"➡️ TP2 / TP3 계속 추적"
-                )
-
-                send_telegram_message(
-                    message
-                )
-
-                continue
-
-        except Exception as e:
-
-            print(
-                f"[TRACK ERROR] "
-                f"{ticker}: {e}"
-            )
-
-    for ticker in completed:
-
-        positions.pop(
-            ticker,
-            None
-        )
-
-    cache[
-        "positions"
-    ] = positions
-
-    save_cache(
-        cache
-    )
-
-
-# ============================================================
-# HISTORY
-# ============================================================
-
-def record_history(
-    cache,
-    ticker,
-    position,
-    result_type,
-    exit_price,
-    pnl_pct
-):
-
-    history = cache.get(
-        "history",
-        []
-    )
-
-    history.append({
-
-        "ticker":
-            ticker,
-
-        "entry":
-            position.get(
-                "entry"
-            ),
-
-        "exit":
-            exit_price,
-
-        "result":
-            result_type,
-
-        "pnl_pct":
-            pnl_pct,
-
-        "score":
-            position.get(
-                "score"
-            ),
-
-        "entry_time":
-            position.get(
-                "entry_time"
-            ),
-
-        "exit_time":
-            datetime.now(
-                timezone.utc
-            ).isoformat()
-    })
-
-    cache[
-        "history"
-    ] = history[-500:]
-
-
-# ============================================================
-# STATISTICS
-# ============================================================
-
-def send_daily_statistics(cache):
-
-    history = cache.get(
-        "history",
-        []
-    )
-
-    if not history:
-
-        return
-
-    total = len(
-        history
-    )
-
-    tp3 = sum(
-        1
-        for x in history
-        if x.get(
-            "result"
-        ) == "TP3"
-    )
-
-    protected = sum(
-        1
-        for x in history
-        if x.get(
-            "result"
-        ) == "PROTECTED"
-    )
-
-    sl = sum(
-        1
-        for x in history
-        if x.get(
-            "result"
-        ) == "STOP_LOSS"
-    )
-
-    total_pnl = sum(
-        float(
-            x.get(
-                "pnl_pct",
-                0
-            )
-        )
-        for x in history
-    )
-
-    message = (
-
-        f"📊 *[TRACKING STATISTICS]*\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-
-        f"▪ 종료: `{total}`\n"
-        f"▪ TP3: `{tp3}`\n"
-        f"▪ 보호종료: `{protected}`\n"
-        f"▪ SL: `{sl}`\n"
-        f"▪ 단순 누적: `{total_pnl:+.2f}%`\n"
-        f"▪ 추적중: "
-        f"`{len(cache.get('positions', {}))}`\n"
-
-        f"━━━━━━━━━━━━━━━━━━\n"
-
-        f"⚠️ 실제 포트폴리오 수익률과는 다를 수 있습니다."
-    )
-
-    send_telegram_message(
-        message
+        "=" * 42
     )
 
 
@@ -3026,21 +2318,9 @@ def send_daily_statistics(cache):
 
 def main():
 
-    print("=" * 65)
-
-    print(
-        "UPBIT ALL-MARKET SMART SIGNAL BOT"
-    )
-
-    print("=" * 65)
-
     telegram_status()
 
     cache = load_cache()
-
-    # ========================================================
-    # STEP 1
-    # ========================================================
 
     print(
         "\n[STEP 1] 기존 포지션 추적"
@@ -3050,24 +2330,14 @@ def main():
         cache
     )
 
+    # tracking 후 최신 cache 재로드
     cache = load_cache()
-
-    # ========================================================
-    # STEP 2
-    # ========================================================
-
-    print(
-        "\n[STEP 2] 업비트 전체 시장 신규 신호 탐색"
-    )
 
     scan_new_signals(
         cache
     )
 
-    # ========================================================
-    # SAVE
-    # ========================================================
-
+    # 마지막 저장
     save_cache(
         cache
     )
@@ -3080,27 +2350,10 @@ def main():
         "BOT FINISHED"
     )
 
-    print("=" * 65)
+    print(
+        "=" * 65
+    )
 
-
-# ============================================================
-# RUN
-# ============================================================
 
 if __name__ == "__main__":
-
-    try:
-
-        main()
-
-    except KeyboardInterrupt:
-
-        print(
-            "사용자에 의해 종료"
-        )
-
-    except Exception as e:
-
-        print(
-            f"[FATAL ERROR] {e}"
-        )
+    main()
