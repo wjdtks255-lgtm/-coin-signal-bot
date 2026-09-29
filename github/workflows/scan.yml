@@ -1,10 +1,10 @@
 name: Upbit Spot Profit Tracking Bot
 
 on:
+  workflow_dispatch: {}
+
   schedule:
     - cron: "*/5 * * * *"
-
-  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -15,7 +15,6 @@ concurrency:
 
 jobs:
   scan:
-
     runs-on: ubuntu-latest
 
     timeout-minutes: 10
@@ -55,6 +54,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No tracking state changes."
           else
-            git commit -m "Update signal tracking state"
+            git commit -m "Update tracking state"
             git push
           fi
