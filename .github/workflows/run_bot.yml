@@ -1,39 +1,82 @@
-name: Upbit Signal Bot
+name: Gold Futures Smart Signal Bot
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'  # 30분마다 자동 실행 (월 사용량 ~1,440분으로 안전)
   workflow_dispatch:
 
+  schedule:
+    # Every 5 minutes
+    - cron: "*/5 * * * *"
+
 permissions:
-  contents: write  # GitHub Actions가 캐시(tracked_coins.json)를 커밋/푸시할 수 있는 권한
+  contents: write
+
+concurrency:
+  group: gold-futures-smart-bot
+  cancel-in-progress: false
 
 jobs:
   run-bot:
+
     runs-on: ubuntu-latest
 
+    timeout-minutes: 5
+
     steps:
+
+      # ======================================================
+      # CHECKOUT
+      # ======================================================
+
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ======================================================
+      # PYTHON
+      # ======================================================
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.11"
+          cache: "pip"
+
+      # ======================================================
+      # INSTALL
+      # ======================================================
 
       - name: Install dependencies
         run: |
-          pip install requests numpy
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Run Bot Script
+      # ======================================================
+      # RUN BOT
+      # ======================================================
+
+      - name: Run Gold Futures Smart Signal Bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py
-
-      - name: Commit and push cache changes
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add tracked_coins.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: update tracked_coins cache [skip ci]" && git push)
+          python bot.py
+
+      # ======================================================
+      # SAVE STATE / LOG
+      # ======================================================
+
+      - name: Save bot state and logs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add signal_state.json bot_log.json
+
+          if git diff --cached --quiet; then
+            echo "No state or log changes."
+          else
+            git commit -m "Update gold bot state and logs"
+            git push
+          fi
