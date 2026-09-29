@@ -473,5 +473,7 @@
         "last_price": 83.1,
         "target_1": 92.13,
         "last_alert": "2026-09-29T00:24:42.653380"
-    }
+    },
+    "positions": {},
+    "history": []
 }
