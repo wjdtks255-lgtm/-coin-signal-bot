@@ -11,23 +11,25 @@ from datetime import datetime, timezone
 # UPBIT SPOT PROFIT TRACKING BOT
 # ============================================================
 #
-# 구조
+# CORE LOGIC
 #
-# 1. BTC 시장 필터
-# 2. 거래대금 상위 종목 선별
-# 3. 1D / 4H / 1H / 15M 분석
-# 4. 신규 매수 신호 생성
-# 5. ACTIVE 포지션 등록
-# 6. 기존 ACTIVE 포지션 가격 추적
-# 7. TP1 / TP2 / TP3 / SL 감지
-# 8. TP1 달성 -> SL을 ENTRY로 이동
-# 9. TP2 달성 -> SL을 TP1으로 이동
-# 10. TP3 또는 SL -> 추적 종료
-# 11. 결과 저장
+# 1. BTC market condition check
+# 2. BTC is NOT an absolute altcoin filter
+# 3. Strong BTC crash -> block new entries
+# 4. BTC weak -> individual coin requirements become stricter
+# 5. Scan high-liquidity KRW markets
+# 6. Analyze 1D / 4H / 1H / 15M
+# 7. Create only high-quality signals
+# 8. Track active positions
+# 9. TP1 -> SL to ENTRY
+# 10. TP2 -> SL to TP1
+# 11. TP3 -> close
+# 12. SL -> close
 #
-# 주의:
-# 이 시스템은 수익을 보장하지 않습니다.
-# 실제 수익성은 반드시 백테스트와 실전 기록으로 검증해야 합니다.
+# IMPORTANT:
+# This is a signal/tracking system.
+# It does NOT execute real trades.
+# Profitability must be validated with actual historical/forward data.
 # ============================================================
 
 
@@ -55,7 +57,7 @@ UPBIT_BASE_URL = "https://api.upbit.com/v1"
 session = requests.Session()
 
 session.headers.update({
-    "User-Agent": "Upbit-Spot-Profit-Tracking-Bot/3.0"
+    "User-Agent": "Upbit-Spot-Profit-Tracking-Bot/4.0"
 })
 
 
@@ -73,6 +75,9 @@ MAX_SCAN_COINS = 60
 # ============================================================
 
 MIN_SCORE = 75
+
+# BTC weak condition
+WEAK_BTC_MIN_SCORE = 80
 
 MIN_VOLUME_RATIO = 180
 
@@ -108,20 +113,22 @@ MIN_NEW_SIGNAL_PRICE_DISTANCE = 2.0
 
 
 # ============================================================
-# BTC FILTER
+# BTC MARKET FILTER
 # ============================================================
 
+# BTC 15M move below this value = emergency risk-off
 BTC_15M_CRASH_PCT = -1.5
+
+# BTC 1H move below this value = additional risk warning
+BTC_1H_CRASH_PCT = -2.0
 
 
 # ============================================================
 # TRACKING
 # ============================================================
 
-# TP1 도달 후 SL -> ENTRY
 MOVE_SL_TO_ENTRY_AFTER_TP1 = True
 
-# TP2 도달 후 SL -> TP1
 MOVE_SL_TO_TP1_AFTER_TP2 = True
 
 
@@ -156,12 +163,34 @@ def api_get(endpoint, params=None):
 # TELEGRAM
 # ============================================================
 
+def telegram_status():
+
+    token_ok = bool(
+        TELEGRAM_TOKEN
+        and TELEGRAM_TOKEN.strip()
+    )
+
+    chat_ok = bool(
+        TELEGRAM_CHAT_ID
+        and TELEGRAM_CHAT_ID.strip()
+    )
+
+    print(
+        "[TELEGRAM] "
+        f"TOKEN={'OK' if token_ok else 'MISSING'} "
+        f"CHAT_ID={'OK' if chat_ok else 'MISSING'}"
+    )
+
+    return token_ok and chat_ok
+
+
 def send_telegram_message(text):
 
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
 
         print(
-            "Telegram 환경변수가 없습니다."
+            "[TELEGRAM] "
+            "환경변수가 없습니다."
         )
 
         return False
@@ -192,6 +221,21 @@ def send_telegram_message(text):
         )
 
         response.raise_for_status()
+
+        result = response.json()
+
+        if not result.get("ok"):
+
+            print(
+                f"[TELEGRAM ERROR] "
+                f"{result}"
+            )
+
+            return False
+
+        print(
+            "[TELEGRAM] 메시지 전송 성공"
+        )
 
         return True
 
@@ -227,17 +271,28 @@ def load_cache():
 
             data = json.load(f)
 
-        # 기존 버전 cache 호환
-        if "positions" not in data:
+        if not isinstance(data, dict):
 
-            data = {
+            return {
                 "positions": {},
                 "history": []
             }
 
+        if "positions" not in data:
+
+            data["positions"] = {}
+
+        if "history" not in data:
+
+            data["history"] = []
+
         return data
 
-    except Exception:
+    except Exception as e:
+
+        print(
+            f"[CACHE LOAD ERROR] {e}"
+        )
 
         return {
             "positions": {},
@@ -249,8 +304,13 @@ def save_cache(cache):
 
     try:
 
+        temp_file = (
+            CACHE_FILE
+            + ".tmp"
+        )
+
         with open(
-            CACHE_FILE,
+            temp_file,
             "w",
             encoding="utf-8"
         ) as f:
@@ -261,6 +321,11 @@ def save_cache(cache):
                 ensure_ascii=False,
                 indent=4
             )
+
+        os.replace(
+            temp_file,
+            CACHE_FILE
+        )
 
     except Exception as e:
 
@@ -338,6 +403,7 @@ def ema(values, period):
     )
 
     if len(values) < period:
+
         return None
 
     alpha = 2 / (period + 1)
@@ -349,11 +415,15 @@ def ema(values, period):
 
     result[0] = values[0]
 
-    for i in range(1, len(values)):
+    for i in range(
+        1,
+        len(values)
+    ):
 
         result[i] = (
             alpha * values[i]
-            + (1 - alpha) * result[i - 1]
+            + (1 - alpha)
+            * result[i - 1]
         )
 
     return result
@@ -370,11 +440,20 @@ def atr(
     period=14
 ):
 
-    highs = np.asarray(highs)
+    highs = np.asarray(
+        highs,
+        dtype=float
+    )
 
-    lows = np.asarray(lows)
+    lows = np.asarray(
+        lows,
+        dtype=float
+    )
 
-    closes = np.asarray(closes)
+    closes = np.asarray(
+        closes,
+        dtype=float
+    )
 
     if len(closes) < period + 1:
 
@@ -385,16 +464,21 @@ def atr(
     tr1 = highs[1:] - lows[1:]
 
     tr2 = np.abs(
-        highs[1:] - previous_close
+        highs[1:]
+        - previous_close
     )
 
     tr3 = np.abs(
-        lows[1:] - previous_close
+        lows[1:]
+        - previous_close
     )
 
     tr = np.maximum(
         tr1,
-        np.maximum(tr2, tr3)
+        np.maximum(
+            tr2,
+            tr3
+        )
     )
 
     return np.mean(
@@ -415,7 +499,10 @@ def get_market_names():
         }
     )
 
-    if not isinstance(data, list):
+    if not isinstance(
+        data,
+        list
+    ):
 
         return {}
 
@@ -428,9 +515,13 @@ def get_market_names():
         )
 
         if not market:
+
             continue
 
-        if not market.startswith("KRW-"):
+        if not market.startswith(
+            "KRW-"
+        ):
+
             continue
 
         market_event = item.get(
@@ -438,11 +529,16 @@ def get_market_names():
             {}
         )
 
-        if market_event.get(
-            "warning"
-        ) is True:
+        if isinstance(
+            market_event,
+            dict
+        ):
 
-            continue
+            if market_event.get(
+                "warning"
+            ) is True:
+
+                continue
 
         result[
             market
@@ -481,11 +577,18 @@ def get_tickers(markets):
             }
         )
 
-        if isinstance(data, list):
+        if isinstance(
+            data,
+            list
+        ):
 
-            result.extend(data)
+            result.extend(
+                data
+            )
 
-        time.sleep(0.12)
+        time.sleep(
+            0.12
+        )
 
     return result
 
@@ -508,7 +611,10 @@ def fetch_candles(
         }
     )
 
-    if not isinstance(data, list):
+    if not isinstance(
+        data,
+        list
+    ):
 
         return None
 
@@ -516,7 +622,6 @@ def fetch_candles(
 
         return None
 
-    # Upbit은 최신 -> 과거 순서
     data.reverse()
 
     return data
@@ -535,7 +640,10 @@ def fetch_daily_candles(
         }
     )
 
-    if not isinstance(data, list):
+    if not isinstance(
+        data,
+        list
+    ):
 
         return None
 
@@ -581,7 +689,8 @@ def candle_quality(candle):
     )
 
     body_ratio = (
-        body / candle_range
+        body
+        / candle_range
     )
 
     close_position = (
@@ -595,7 +704,7 @@ def candle_quality(candle):
 
 
 # ============================================================
-# BTC MARKET
+# BTC MARKET CONDITION
 # ============================================================
 
 def check_btc_market():
@@ -603,19 +712,19 @@ def check_btc_market():
     btc_15 = fetch_candles(
         "KRW-BTC",
         15,
-        80
+        100
     )
 
     btc_1h = fetch_candles(
         "KRW-BTC",
         60,
-        100
+        120
     )
 
     btc_4h = fetch_candles(
         "KRW-BTC",
         240,
-        100
+        120
     )
 
     if not all([
@@ -624,13 +733,16 @@ def check_btc_market():
         btc_4h
     ]):
 
-        return False, "BTC 데이터 부족"
+        return {
+            "status": "UNKNOWN",
+            "score": 0,
+            "reason": "BTC 데이터 부족"
+        }
 
-    # 마지막 캔들 = 진행 중일 가능성이 있으므로 제외
+    # 진행 중 캔들 제거
+
     btc_15 = btc_15[:-1]
-
     btc_1h = btc_1h[:-1]
-
     btc_4h = btc_4h[:-1]
 
     close15 = np.array([
@@ -672,15 +784,30 @@ def check_btc_market():
         ]
     ):
 
-        return False, "BTC EMA 데이터 부족"
+        return {
+            "status": "UNKNOWN",
+            "score": 0,
+            "reason": "BTC EMA 데이터 부족"
+        }
 
     current15 = close15[-1]
 
     previous15 = close15[-2]
 
     change15 = (
-        (current15 - previous15)
+        (
+            current15
+            - previous15
+        )
         / previous15
+    ) * 100
+
+    change1h = (
+        (
+            close1h[-1]
+            - close1h[-5]
+        )
+        / close1h[-5]
     ) * 100
 
     score = 0
@@ -697,36 +824,88 @@ def check_btc_market():
 
         score += 20
 
-    if change15 > BTC_15M_CRASH_PCT:
+    if change15 > -0.5:
 
         score += 10
 
-    # 단기 급락
-    if change15 <= BTC_15M_CRASH_PCT:
+    # --------------------------------------------------------
+    # EMERGENCY CRASH
+    # --------------------------------------------------------
 
-        return False, (
-            f"BTC 15M 급락 "
-            f"{change15:.2f}%"
-        )
-
-    # 중기 약세
     if (
-        close4h[-1] < ema20_4h[-1]
-        and
-        ema20_1h[-1] < ema50_1h[-1]
+        change15
+        <= BTC_15M_CRASH_PCT
     ):
 
-        return False, "BTC 중기 약세"
+        return {
+            "status": "CRASH",
+            "score": score,
+            "reason": (
+                f"BTC 15M 급락 "
+                f"{change15:.2f}%"
+            ),
+            "change15": change15,
+            "change1h": change1h
+        }
 
-    if score < 50:
+    if (
+        change1h
+        <= BTC_1H_CRASH_PCT
+        and
+        change15 < -0.8
+    ):
 
-        return False, (
-            f"BTC Score {score}"
+        return {
+            "status": "CRASH",
+            "score": score,
+            "reason": (
+                f"BTC 1H 급락 "
+                f"{change1h:.2f}%"
+            ),
+            "change15": change15,
+            "change1h": change1h
+        }
+
+    # --------------------------------------------------------
+    # MARKET STATUS
+    # --------------------------------------------------------
+
+    if score >= 70:
+
+        status = "BULL"
+
+        reason = (
+            f"BTC 강세 / Score {score}"
         )
 
-    return True, (
-        f"BTC 정상 / Score {score}"
-    )
+    elif score >= 45:
+
+        status = "NEUTRAL"
+
+        reason = (
+            f"BTC 중립 / Score {score}"
+        )
+
+    else:
+
+        status = "WEAK"
+
+        reason = (
+            f"BTC 약세 / Score {score}"
+        )
+
+    return {
+
+        "status": status,
+
+        "score": score,
+
+        "reason": reason,
+
+        "change15": change15,
+
+        "change1h": change1h
+    }
 
 
 # ============================================================
@@ -735,7 +914,8 @@ def check_btc_market():
 
 def analyze_coin(
     ticker,
-    current_price
+    current_price,
+    btc_status
 ):
 
     daily = fetch_daily_candles(
@@ -783,17 +963,15 @@ def analyze_coin(
         return None
 
     # 진행 중 캔들 제거
+
     daily = daily[:-1]
-
     h4 = h4[:-1]
-
     h1 = h1[:-1]
-
     m15 = m15[:-1]
 
-    # --------------------------------------------------------
-    # PRICE ARRAYS
-    # --------------------------------------------------------
+    # ========================================================
+    # ARRAYS
+    # ========================================================
 
     d_close = np.array([
         x["trade_price"]
@@ -830,9 +1008,9 @@ def analyze_coin(
         for x in m15
     ])
 
-    # --------------------------------------------------------
+    # ========================================================
     # EMA
-    # --------------------------------------------------------
+    # ========================================================
 
     d_ema20 = ema(
         d_close,
@@ -889,7 +1067,7 @@ def analyze_coin(
     reasons = []
 
     # ========================================================
-    # 1D
+    # 1D TREND
     # ========================================================
 
     if d_close[-1] <= d_ema20[-1]:
@@ -921,7 +1099,7 @@ def analyze_coin(
         )
 
     # ========================================================
-    # 4H
+    # 4H TREND
     # ========================================================
 
     if h4_close[-1] <= h4_ema20[-1]:
@@ -953,7 +1131,7 @@ def analyze_coin(
         )
 
     # ========================================================
-    # 1H
+    # 1H TREND
     # ========================================================
 
     if h1_close[-1] <= h1_ema20[-1]:
@@ -1004,9 +1182,9 @@ def analyze_coin(
             "15M EMA 상승"
         )
 
-    # --------------------------------------------------------
-    # Volume
-    # --------------------------------------------------------
+    # ========================================================
+    # VOLUME
+    # ========================================================
 
     avg_volume = np.mean(
         m15_volume[-21:-1]
@@ -1031,12 +1209,14 @@ def analyze_coin(
         f"거래량 {volume_ratio:.0f}%"
     )
 
-    # --------------------------------------------------------
-    # Candle
-    # --------------------------------------------------------
+    # ========================================================
+    # CANDLE
+    # ========================================================
 
-    body_ratio, close_position = candle_quality(
-        m15[-1]
+    body_ratio, close_position = (
+        candle_quality(
+            m15[-1]
+        )
     )
 
     last_open = m15[-1][
@@ -1065,9 +1245,9 @@ def analyze_coin(
 
         return None
 
-    # --------------------------------------------------------
-    # Breakout
-    # --------------------------------------------------------
+    # ========================================================
+    # BREAKOUT
+    # ========================================================
 
     recent_high = np.max(
         m15_close[-21:-1]
@@ -1105,7 +1285,10 @@ def analyze_coin(
 
         return None
 
-    # 최근 4H 급등 추격 방지
+    # ========================================================
+    # 4H PUMP FILTER
+    # ========================================================
+
     change_4h = (
         (
             h4_close[-1]
@@ -1119,10 +1302,74 @@ def analyze_coin(
         return None
 
     # ========================================================
-    # SCORE
+    # BTC WEAK MARKET MODE
+    # ========================================================
+    #
+    # BTC 약세라고 알트 신호를 차단하지 않는다.
+    #
+    # 대신 개별 코인이 더 강해야 통과한다.
     # ========================================================
 
-    if score < MIN_SCORE:
+    btc_bonus = 0
+
+    if btc_status == "BULL":
+
+        btc_bonus = 5
+
+        reasons.append(
+            "BTC 우호적"
+        )
+
+    elif btc_status == "NEUTRAL":
+
+        btc_bonus = 0
+
+        reasons.append(
+            "BTC 중립"
+        )
+
+    elif btc_status == "WEAK":
+
+        # BTC 약세에서도 상승하는
+        # 개별 강세 코인을 허용.
+        #
+        # 대신 추가 조건:
+        # 15M 거래량 250% 이상
+        # + 실제 고점 돌파
+        # 를 요구한다.
+
+        if (
+            volume_ratio < 250
+            or
+            not breakout
+        ):
+
+            return None
+
+        score += 5
+
+        reasons.append(
+            "BTC 약세 속 개별 강세"
+        )
+
+    # ========================================================
+    # FINAL SCORE
+    # ========================================================
+
+    final_score = (
+        score
+        + btc_bonus
+    )
+
+    required_score = MIN_SCORE
+
+    if btc_status == "WEAK":
+
+        required_score = (
+            WEAK_BTC_MIN_SCORE
+        )
+
+    if final_score < required_score:
 
         return None
 
@@ -1175,7 +1422,7 @@ def analyze_coin(
         return None
 
     # ========================================================
-    # TARGET
+    # TARGETS
     # ========================================================
 
     risk = (
@@ -1227,6 +1474,7 @@ def analyze_coin(
         return None
 
     # TP2
+
     min_tp2 = (
         current_price
         + risk * MIN_RR_TP2
@@ -1246,10 +1494,12 @@ def analyze_coin(
     ) / risk
 
     # TP3
+
     target_3 = round_upbit_tick(
         max(
             target_2 * 1.025,
-            current_price + risk * 3
+            current_price
+            + risk * 3
         )
     )
 
@@ -1264,7 +1514,7 @@ def analyze_coin(
 
     return {
 
-        "score": score,
+        "score": final_score,
 
         "current_price": current_price,
 
@@ -1296,6 +1546,8 @@ def analyze_coin(
 
         "breakout": breakout,
 
+        "btc_status": btc_status,
+
         "candle_time": m15[-1].get(
             "candle_date_time_kst",
             ""
@@ -1306,7 +1558,7 @@ def analyze_coin(
 
 
 # ============================================================
-# TRACKING CANDLES
+# 1 MINUTE CANDLES
 # ============================================================
 
 def get_recent_1m_candles(
@@ -1322,42 +1574,16 @@ def get_recent_1m_candles(
         }
     )
 
-    if not isinstance(data, list):
+    if not isinstance(
+        data,
+        list
+    ):
 
         return []
 
     data.reverse()
 
     return data
-
-
-# ============================================================
-# PRICE HIT CHECK
-# ============================================================
-
-def level_hit(
-    candle,
-    level,
-    direction
-):
-
-    high = candle[
-        "high_price"
-    ]
-
-    low = candle[
-        "low_price"
-    ]
-
-    if direction == "up":
-
-        return high >= level
-
-    if direction == "down":
-
-        return low <= level
-
-    return False
 
 
 # ============================================================
@@ -1374,7 +1600,8 @@ def track_positions(cache):
     if not positions:
 
         print(
-            "[TRACKING] 현재 추적 중인 종목 없음"
+            "[TRACKING] "
+            "현재 추적 중인 종목 없음"
         )
 
         return
@@ -1419,18 +1646,16 @@ def track_positions(cache):
                 ["trade_price"]
             )
 
-            candles = get_recent_1m_candles(
-                ticker,
-                10
+            candles = (
+                get_recent_1m_candles(
+                    ticker,
+                    10
+                )
             )
 
             if not candles:
 
                 continue
-
-            # ------------------------------------------------
-            # 현재 단계
-            # ------------------------------------------------
 
             stage = position.get(
                 "stage",
@@ -1457,10 +1682,6 @@ def track_positions(cache):
                 "current_sl"
             ]
 
-            # ------------------------------------------------
-            # 1분봉 확인
-            # ------------------------------------------------
-
             hit_tp1 = False
             hit_tp2 = False
             hit_tp3 = False
@@ -1476,12 +1697,10 @@ def track_positions(cache):
                     "low_price"
                 ]
 
-                # 현재 SL
                 if low <= sl:
 
                     hit_sl = True
 
-                # TP
                 if high >= tp1:
 
                     hit_tp1 = True
@@ -1495,21 +1714,10 @@ def track_positions(cache):
                     hit_tp3 = True
 
             # =================================================
-            # 중요한 예외
-            # =================================================
-            #
-            # 같은 관측 구간에서 SL과 TP가 동시에 찍혔다면
-            # OHLC만으로 선후관계를 알 수 없음.
-            #
-            # 수익을 과대평가하지 않기 위해 SL 우선 처리.
+            # SL FIRST
             # =================================================
 
             if hit_sl:
-
-                # ------------------------------------------------
-                # TP1 이후 SL이 ENTRY로 올라간 상태라면
-                # "본전 종료"로 처리
-                # ------------------------------------------------
 
                 if stage in [
                     "TP1",
@@ -1525,7 +1733,9 @@ def track_positions(cache):
 
                     result_type = (
                         "BREAKEVEN"
-                        if abs(pnl_pct) < 0.05
+                        if abs(
+                            pnl_pct
+                        ) < 0.05
                         else "PROTECTED"
                     )
 
@@ -1538,7 +1748,9 @@ def track_positions(cache):
                         / entry
                     ) * 100
 
-                    result_type = "STOP_LOSS"
+                    result_type = (
+                        "STOP_LOSS"
+                    )
 
                 message = (
 
@@ -1546,18 +1758,25 @@ def track_positions(cache):
                     f"━━━━━━━━━━━━━━━━━━\n"
 
                     f"▪ 자산: `{ticker}`\n"
-                    f"▪ 진입가: `{format_price(entry)}원`\n"
-                    f"▪ 종료가: `{format_price(sl)}원`\n"
 
-                    f"▪ 결과: `{result_type}`\n"
+                    f"▪ 진입가: "
+                    f"`{format_price(entry)}원`\n"
+
+                    f"▪ 종료가: "
+                    f"`{format_price(sl)}원`\n"
+
+                    f"▪ 결과: "
+                    f"`{result_type}`\n"
 
                     f"▪ 손익률: "
                     f"`{pnl_pct:+.2f}%`\n"
 
-                    f"▪ 당시 단계: `{stage}`\n"
+                    f"▪ 당시 단계: "
+                    f"`{stage}`\n"
 
                     f"━━━━━━━━━━━━━━━━━━\n"
-                    f"📌 해당 종목 추적 종료"
+
+                    f"📌 추적 종료"
                 )
 
                 send_telegram_message(
@@ -1602,7 +1821,8 @@ def track_positions(cache):
                     f"━━━━━━━━━━━━━━━━━━\n"
 
                     f"▪ 자산: `{ticker}`\n"
-                    f"▪ 진입가: "
+
+                    f"▪ ENTRY: "
                     f"`{format_price(entry)}원`\n"
 
                     f"▪ TP3: "
@@ -1754,10 +1974,6 @@ def track_positions(cache):
                 f"{ticker}: {e}"
             )
 
-    # --------------------------------------------------------
-    # 종료 종목 제거
-    # --------------------------------------------------------
-
     for ticker in completed:
 
         positions.pop(
@@ -1823,14 +2039,13 @@ def record_history(
         record
     )
 
-    # 최근 500개만 보관
     cache[
         "history"
     ] = history[-500:]
 
 
 # ============================================================
-# NEW SIGNAL DUPLICATE
+# DUPLICATE CHECK
 # ============================================================
 
 def can_create_new_signal(
@@ -1844,12 +2059,10 @@ def can_create_new_signal(
         {}
     )
 
-    # 이미 추적 중
     if ticker in positions:
 
         return False
 
-    # 과거 신호
     history = cache.get(
         "history",
         []
@@ -1857,7 +2070,9 @@ def can_create_new_signal(
 
     previous = None
 
-    for item in reversed(history):
+    for item in reversed(
+        history
+    ):
 
         if item.get(
             "ticker"
@@ -1879,8 +2094,10 @@ def can_create_new_signal(
 
         try:
 
-            previous_dt = datetime.fromisoformat(
-                previous_time
+            previous_dt = (
+                datetime.fromisoformat(
+                    previous_time
+                )
             )
 
             now = datetime.now(
@@ -1888,7 +2105,8 @@ def can_create_new_signal(
             )
 
             elapsed = (
-                now - previous_dt
+                now
+                - previous_dt
             ).total_seconds()
 
             if elapsed < (
@@ -2003,7 +2221,12 @@ def create_position(
 
         "signal_candle": result[
             "candle_time"
-        ]
+        ],
+
+        "btc_status": result.get(
+            "btc_status",
+            "UNKNOWN"
+        )
     }
 
     cache[
@@ -2014,37 +2237,27 @@ def create_position(
         cache
     )
 
-    # --------------------------------------------------------
-    # Telegram
-    # --------------------------------------------------------
-
     volume_ratio = result[
         "volume_ratio"
     ]
 
     if volume_ratio >= STRONG_VOLUME_RATIO:
 
-        volume_text = (
-            "💥 폭발적"
-        )
+        volume_text = "💥 폭발적"
 
     elif volume_ratio >= 220:
 
-        volume_text = (
-            "🔥 강한 유입"
-        )
+        volume_text = "🔥 강한 유입"
 
     else:
 
-        volume_text = (
-            "⚡ 증가"
-        )
+        volume_text = "⚡ 증가"
 
     breakout_text = (
-        "돌파 확인"
+        "고점 돌파"
         if result["breakout"]
         else
-        "돌파 전환"
+        "추세 전환"
     )
 
     reasons = ", ".join(
@@ -2052,9 +2265,30 @@ def create_position(
     )
 
     upbit_url = (
-        f"https://upbit.com/exchange"
+        "https://upbit.com/exchange"
         f"?code=CRIX.UPBIT.{ticker}"
     )
+
+    btc_status = result.get(
+        "btc_status",
+        "UNKNOWN"
+    )
+
+    if btc_status == "BULL":
+
+        btc_text = "🟢 강세"
+
+    elif btc_status == "NEUTRAL":
+
+        btc_text = "🟡 중립"
+
+    elif btc_status == "WEAK":
+
+        btc_text = "🟠 약세 속 개별강세"
+
+    else:
+
+        btc_text = "⚪ 확인불가"
 
     message = (
 
@@ -2070,6 +2304,14 @@ def create_position(
         f"▪ 24H 거래대금: "
         f"`{acc_trade_price / 100_000_000:,.1f}억`\n\n"
 
+        f"🌐 *MARKET*\n"
+
+        f"▪ BTC 상태: "
+        f"`{btc_text}`\n"
+
+        f"▪ 4H 변화: "
+        f"`{result['change_4h']:+.1f}%`\n\n"
+
         f"📊 *SIGNAL QUALITY*\n"
 
         f"▪ Score: "
@@ -2078,9 +2320,6 @@ def create_position(
         f"▪ 15M 거래량: "
         f"`평균 대비 {volume_ratio:.0f}%` "
         f"{volume_text}\n"
-
-        f"▪ 4H 변화: "
-        f"`{result['change_4h']:+.1f}%`\n"
 
         f"▪ 상태: "
         f"`{breakout_text}`\n\n"
@@ -2106,17 +2345,18 @@ def create_position(
         f"`{format_price(result['stop_loss'])}원` "
         f"(-{result['stop_loss_pct']:.1f}%)\n"
 
-        f"▪ TP1 이후 SL → ENTRY\n"
-        f"▪ TP2 이후 SL → TP1\n\n"
+        f"▪ TP1 → SL = ENTRY\n"
+        f"▪ TP2 → SL = TP1\n\n"
 
         f"🔎 *CONFIRMATION*\n"
         f"`{reasons}`\n\n"
 
-        f"📱 [업비트 차트 열기]({upbit_url})\n"
+        f"📱 [업비트 차트 열기]"
+        f"({upbit_url})\n"
 
         f"━━━━━━━━━━━━━━━━━━\n"
 
-        f"📌 *이 종목은 지금부터 자동 추적됩니다.*"
+        f"📌 *지금부터 자동 추적됩니다.*"
     )
 
     send_telegram_message(
@@ -2130,21 +2370,83 @@ def create_position(
 
 def scan_new_signals(cache):
 
-    btc_safe, btc_reason = (
-        check_btc_market()
+    btc = check_btc_market()
+
+    btc_status = btc.get(
+        "status",
+        "UNKNOWN"
+    )
+
+    btc_reason = btc.get(
+        "reason",
+        "UNKNOWN"
     )
 
     print(
         f"[BTC] {btc_reason}"
     )
 
-    if not btc_safe:
+    # ========================================================
+    # ONLY STRONG BTC CRASH BLOCKS NEW ENTRIES
+    # ========================================================
+
+    if btc_status == "CRASH":
 
         print(
-            "🚫 BTC 조건 불충족"
+            "🚫 BTC 급락 감지"
+        )
+
+        print(
+            "   신규 매수 신호 탐색 중단"
         )
 
         return
+
+    if btc_status == "WEAK":
+
+        print(
+            "⚠️ BTC 약세"
+        )
+
+        print(
+            "   개별 코인 조건을 강화하여 계속 탐색"
+        )
+
+    elif btc_status == "NEUTRAL":
+
+        print(
+            "🟡 BTC 중립"
+        )
+
+        print(
+            "   정상적으로 개별 코인 탐색"
+        )
+
+    elif btc_status == "BULL":
+
+        print(
+            "🟢 BTC 강세"
+        )
+
+        print(
+            "   정상적으로 개별 코인 탐색"
+        )
+
+    else:
+
+        print(
+            "⚠️ BTC 상태 확인 불가"
+        )
+
+        print(
+            "   보수적으로 탐색 중단"
+        )
+
+        return
+
+    # ========================================================
+    # MARKETS
+    # ========================================================
 
     market_names = get_market_names()
 
@@ -2171,7 +2473,8 @@ def scan_new_signals(cache):
         if x.get(
             "acc_trade_price_24h",
             0
-        ) >= MIN_24H_TRADE_VALUE
+        )
+        >= MIN_24H_TRADE_VALUE
 
     ]
 
@@ -2227,20 +2530,27 @@ def scan_new_signals(cache):
 
             result = analyze_coin(
                 ticker,
-                current_price
+                current_price,
+                btc_status
             )
 
             if not result:
 
-                time.sleep(0.12)
+                time.sleep(
+                    0.12
+                )
 
                 continue
 
             print(
-                f"  SCORE={result['score']} "
-                f"VOL={result['volume_ratio']:.0f}% "
-                f"SL={result['stop_loss_pct']:.2f}% "
-                f"RR={result['rr_tp1']:.2f}"
+                f"  SCORE="
+                f"{result['score']} "
+                f"VOL="
+                f"{result['volume_ratio']:.0f}% "
+                f"SL="
+                f"{result['stop_loss_pct']:.2f}% "
+                f"RR="
+                f"{result['rr_tp1']:.2f}"
             )
 
             if not can_create_new_signal(
@@ -2253,7 +2563,9 @@ def scan_new_signals(cache):
                     "  -> 이미 추적 중/쿨다운"
                 )
 
-                time.sleep(0.12)
+                time.sleep(
+                    0.12
+                )
 
                 continue
 
@@ -2279,7 +2591,9 @@ def scan_new_signals(cache):
                 f"{ticker}: {e}"
             )
 
-        time.sleep(0.15)
+        time.sleep(
+            0.15
+        )
 
     print(
         f"[SCAN COMPLETE] "
@@ -2300,21 +2614,30 @@ def send_daily_statistics(cache):
 
     if not history:
 
+        print(
+            "[STATS] 기록 없음"
+        )
+
         return
 
-    total = len(history)
+    total = len(
+        history
+    )
 
     tp3_count = sum(
         1
         for x in history
-        if x.get("result") == "TP3"
+        if x.get(
+            "result"
+        ) == "TP3"
     )
 
-    tp1_protected = sum(
+    protected_count = sum(
         1
         for x in history
-        if x.get("result")
-        in [
+        if x.get(
+            "result"
+        ) in [
             "BREAKEVEN",
             "PROTECTED"
         ]
@@ -2323,8 +2646,9 @@ def send_daily_statistics(cache):
     sl_count = sum(
         1
         for x in history
-        if x.get("result")
-        == "STOP_LOSS"
+        if x.get(
+            "result"
+        ) == "STOP_LOSS"
     )
 
     total_pnl = sum(
@@ -2344,10 +2668,12 @@ def send_daily_statistics(cache):
 
         f"▪ 누적 종료: `{total}건`\n"
         f"▪ TP3: `{tp3_count}건`\n"
-        f"▪ 보호 종료: `{tp1_protected}건`\n"
+        f"▪ 보호 종료: `{protected_count}건`\n"
         f"▪ SL: `{sl_count}건`\n"
+
         f"▪ 단순 누적 손익률: "
         f"`{total_pnl:+.2f}%`\n"
+
         f"▪ 현재 추적 중: "
         f"`{len(cache.get('positions', {}))}건`\n"
 
@@ -2376,10 +2702,20 @@ def main():
 
     print("=" * 65)
 
+    # --------------------------------------------------------
+    # Telegram 상태
+    # --------------------------------------------------------
+
+    telegram_status()
+
+    # --------------------------------------------------------
+    # Cache
+    # --------------------------------------------------------
+
     cache = load_cache()
 
     # ========================================================
-    # 1. 기존 포지션 추적
+    # STEP 1
     # ========================================================
 
     print(
@@ -2391,10 +2727,11 @@ def main():
     )
 
     # cache 다시 로드
+
     cache = load_cache()
 
     # ========================================================
-    # 2. 신규 신호 탐색
+    # STEP 2
     # ========================================================
 
     print(
@@ -2402,6 +2739,14 @@ def main():
     )
 
     scan_new_signals(
+        cache
+    )
+
+    # ========================================================
+    # SAVE
+    # ========================================================
+
+    save_cache(
         cache
     )
 
