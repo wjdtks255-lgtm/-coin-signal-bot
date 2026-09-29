@@ -489,20 +489,6 @@
       "score": 85,
       "direction": "LONG"
     },
-    "KRW-AAVE": {
-      "market": "KRW-AAVE",
-      "entry": 226900.0,
-      "stop": 222541.8360687426,
-      "tp1": 233437.2458968861,
-      "tp2": 235616.32786251482,
-      "tp3": 239974.49179377223,
-      "stage": "ENTRY",
-      "signal_id": "KRW-AAVE|2026-09-29T19:45:00",
-      "signal_candle": "2026-09-29T19:45:00",
-      "created_at": "2026-09-29T20:10:59.129986+09:00",
-      "score": 85,
-      "direction": "LONG"
-    },
     "KRW-CELO": {
       "market": "KRW-CELO",
       "entry": 157.0,
@@ -557,20 +543,6 @@
       "signal_candle": "2026-09-29T19:45:00",
       "created_at": "2026-09-29T20:11:10.824566+09:00",
       "score": 84,
-      "direction": "LONG"
-    },
-    "KRW-ARX": {
-      "market": "KRW-ARX",
-      "entry": 368.0,
-      "stop": 356.7700665658721,
-      "tp1": 384.84490015119184,
-      "tp2": 390.45986686825574,
-      "tp3": 401.6898003023836,
-      "stage": "ENTRY",
-      "signal_id": "KRW-ARX|2026-09-29T19:45:00",
-      "signal_candle": "2026-09-29T19:45:00",
-      "created_at": "2026-09-29T20:11:13.606411+09:00",
-      "score": 75,
       "direction": "LONG"
     },
     "KRW-PUMP": {
@@ -889,14 +861,79 @@
       "tp2": 20.805328727255926,
       "tp3": 21.15799309088389,
       "stage": "ENTRY",
-      "score": 90,
       "signal_id": "KRW-W|2026-09-29T20:00:00",
       "signal_candle": "2026-09-29T20:00:00",
+      "created_at": "2026-09-29T20:23:38.371124+09:00",
+      "score": 90,
+      "direction": "LONG"
+    },
+    "KRW-ARX": {
+      "market": "KRW-ARX",
+      "entry": 359.0,
+      "stop": 347.5644976060595,
+      "tp1": 376.15325359091077,
+      "tp2": 381.871004787881,
+      "tp3": 393.30650718182153,
+      "stage": "ENTRY",
+      "signal_id": "KRW-ARX|2026-09-29T20:15:00",
+      "signal_candle": "2026-09-29T20:15:00",
+      "created_at": "2026-09-29T20:35:17.943625+09:00",
+      "score": 75,
+      "direction": "LONG"
+    },
+    "KRW-PROS": {
+      "market": "KRW-PROS",
+      "entry": 910.0,
+      "stop": 896.637611928229,
+      "tp1": 930.0435821076564,
+      "tp2": 936.7247761435419,
+      "tp3": 950.0871642153129,
+      "stage": "ENTRY",
+      "signal_id": "KRW-PROS|2026-09-29T20:15:00",
+      "signal_candle": "2026-09-29T20:15:00",
+      "created_at": "2026-09-29T20:36:05.737652+09:00",
+      "score": 75,
+      "direction": "LONG"
+    },
+    "KRW-2Z": {
+      "market": "KRW-2Z",
+      "entry": 93.7,
+      "stop": 92.46302183135745,
+      "tp1": 95.55546725296384,
+      "tp2": 96.1739563372851,
+      "tp3": 97.41093450592766,
+      "stage": "ENTRY",
+      "score": 85,
+      "signal_id": "KRW-2Z|2026-09-29T20:15:00",
+      "signal_candle": "2026-09-29T20:15:00",
       "direction": "LONG",
-      "created_at": "2026-09-29T20:23:38.371124+09:00"
+      "created_at": "2026-09-29T20:36:29.948501+09:00"
     }
   },
-  "history": [],
+  "history": [
+    {
+      "market": "KRW-AAVE",
+      "signal_id": "KRW-AAVE|2026-09-29T19:45:00",
+      "entry": 226900.0,
+      "exit_price": 233437.2458968861,
+      "result": "TP1",
+      "pnl_pct": 2.8811132203111933,
+      "score": 85,
+      "created_at": "2026-09-29T20:10:59.129986+09:00",
+      "closed_at": "2026-09-29T20:34:45.589589+09:00"
+    },
+    {
+      "market": "KRW-ARX",
+      "signal_id": "KRW-ARX|2026-09-29T19:45:00",
+      "entry": 368.0,
+      "exit_price": 356.7700665658721,
+      "result": "STOP_LOSS",
+      "pnl_pct": -3.0516123462304034,
+      "score": 75,
+      "created_at": "2026-09-29T20:11:13.606411+09:00",
+      "closed_at": "2026-09-29T20:34:48.642660+09:00"
+    }
+  ],
   "sent_signal_ids": [
     "KRW-AVAX|2026-09-29T19:45:00",
     "KRW-AAVE|2026-09-29T19:45:00",
@@ -927,7 +964,25 @@
     "KRW-PLUME|2026-09-29T19:45:00",
     "KRW-ARB|2026-09-29T20:00:00",
     "KRW-ICP|2026-09-29T20:00:00",
-    "KRW-W|2026-09-29T20:00:00"
+    "KRW-W|2026-09-29T20:00:00",
+    "KRW-ARX|2026-09-29T20:15:00",
+    "KRW-PROS|2026-09-29T20:15:00",
+    "KRW-2Z|2026-09-29T20:15:00"
   ],
-  "legacy_positions": {}
+  "legacy_positions": {
+    "KRW-AAVE": {
+      "market": "KRW-AAVE",
+      "entry": 226900.0,
+      "stop": 226900.0,
+      "tp1": 233437.2458968861,
+      "tp2": 235616.32786251482,
+      "tp3": 239974.49179377223,
+      "stage": "TP1",
+      "signal_id": "KRW-AAVE|2026-09-29T19:45:00",
+      "signal_candle": "2026-09-29T19:45:00",
+      "created_at": "2026-09-29T20:10:59.129986+09:00",
+      "score": 85,
+      "direction": "LONG"
+    }
+  }
 }
