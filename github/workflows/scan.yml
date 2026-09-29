@@ -1,97 +1,60 @@
 name: Upbit Spot Profit Tracking Bot
 
 on:
-
-  # 5분마다 실행
-  #
-  # 실제 실행 시각은 GitHub Actions 상황에 따라
-  # 약간 지연될 수 있음.
   schedule:
     - cron: "*/5 * * * *"
 
-  # GitHub에서 수동 실행 가능
-  workflow_dispatch:
-
+  workflow_dispatch: {}
 
 permissions:
   contents: write
 
+concurrency:
+  group: upbit-profit-tracking
+  cancel-in-progress: false
 
 jobs:
-
   scan:
 
     runs-on: ubuntu-latest
 
     timeout-minutes: 10
 
-
     steps:
-
-      # ======================================================
-      # CHECKOUT
-      # ======================================================
 
       - name: Checkout repository
         uses: actions/checkout@v4
-
         with:
           fetch-depth: 0
 
-
-      # ======================================================
-      # PYTHON
-      # ======================================================
-
       - name: Setup Python
         uses: actions/setup-python@v5
-
         with:
           python-version: "3.11"
           cache: "pip"
 
-
-      # ======================================================
-      # INSTALL
-      # ======================================================
-
       - name: Install dependencies
         run: |
-
           python -m pip install --upgrade pip
-
           pip install requests numpy
-
-
-      # ======================================================
-      # RUN BOT
-      # ======================================================
 
       - name: Run Upbit Signal Bot
         env:
-
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
         run: |
-
           python bot.py
 
-
-      # ======================================================
-      # SAVE TRACKING STATE
-      # ======================================================
-
-      - name: Commit tracking state
+      - name: Save tracking state
         run: |
-
           git config user.name "github-actions[bot]"
-
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add tracked_coins.json
 
-          git diff --cached --quiet || git commit -m "Update signal tracking state"
-
-          git push
+          if git diff --cached --quiet; then
+            echo "No tracking state changes."
+          else
+            git commit -m "Update signal tracking state"
+            git push
+          fi
