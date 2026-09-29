@@ -531,6 +531,25 @@
             "entry_time": "2026-09-29T08:13:08.968730+00:00",
             "signal_candle": "2026-09-29T16:45:00",
             "btc_status": "NEUTRAL"
+        },
+        "KRW-BIO": {
+            "ticker": "KRW-BIO",
+            "korean_name": "바이오프로토콜",
+            "entry": 41.6,
+            "original_sl": 39.01,
+            "current_sl": 39.01,
+            "tp1": 45.49,
+            "tp2": 46.78,
+            "tp3": 49.37,
+            "score": 87,
+            "volume_ratio": 245.0951223804591,
+            "rr_tp1": 1.5019305019305003,
+            "rr_tp2": 1.9999999999999973,
+            "rr_tp3": 2.9999999999999947,
+            "stage": "ENTRY",
+            "entry_time": "2026-09-29T08:38:03.598536+00:00",
+            "signal_candle": "2026-09-29T17:15:00",
+            "btc_status": "NEUTRAL"
         }
     },
     "history": []
