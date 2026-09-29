@@ -573,20 +573,6 @@
       "score": 79,
       "direction": "LONG"
     },
-    "KRW-COW": {
-      "market": "KRW-COW",
-      "entry": 221.0,
-      "stop": 218.51457655439188,
-      "tp1": 224.72813516841217,
-      "tp2": 225.97084689121624,
-      "tp3": 228.45627033682436,
-      "stage": "ENTRY",
-      "signal_id": "KRW-COW|2026-09-29T19:45:00",
-      "signal_candle": "2026-09-29T19:45:00",
-      "created_at": "2026-09-29T20:12:08.984649+09:00",
-      "score": 85,
-      "direction": "LONG"
-    },
     "KRW-ALGO": {
       "market": "KRW-ALGO",
       "entry": 180.0,
@@ -713,20 +699,6 @@
       "score": 75,
       "direction": "LONG"
     },
-    "KRW-PROS": {
-      "market": "KRW-PROS",
-      "entry": 910.0,
-      "stop": 896.637611928229,
-      "tp1": 930.0435821076564,
-      "tp2": 936.7247761435419,
-      "tp3": 950.0871642153129,
-      "stage": "ENTRY",
-      "signal_id": "KRW-PROS|2026-09-29T20:15:00",
-      "signal_candle": "2026-09-29T20:15:00",
-      "created_at": "2026-09-29T20:36:05.737652+09:00",
-      "score": 75,
-      "direction": "LONG"
-    },
     "KRW-2Z": {
       "market": "KRW-2Z",
       "entry": 93.7,
@@ -752,20 +724,6 @@
       "signal_id": "KRW-AAVE|2026-09-29T20:30:00",
       "signal_candle": "2026-09-29T20:30:00",
       "created_at": "2026-09-29T20:48:42.096519+09:00",
-      "score": 100,
-      "direction": "LONG"
-    },
-    "KRW-XLM": {
-      "market": "KRW-XLM",
-      "entry": 321.0,
-      "stop": 315.94697260036435,
-      "tp1": 328.5795410994535,
-      "tp2": 331.1060547992713,
-      "tp3": 336.15908219890696,
-      "stage": "ENTRY",
-      "signal_id": "KRW-XLM|2026-09-29T20:30:00",
-      "signal_candle": "2026-09-29T20:30:00",
-      "created_at": "2026-09-29T20:48:48.822294+09:00",
       "score": 100,
       "direction": "LONG"
     },
@@ -825,34 +783,6 @@
       "score": 87,
       "direction": "LONG"
     },
-    "KRW-APT": {
-      "market": "KRW-APT",
-      "entry": 1149.0,
-      "stop": 1137.915166279529,
-      "tp1": 1165.6272505807065,
-      "tp2": 1171.1696674409418,
-      "tp3": 1182.2545011614127,
-      "stage": "ENTRY",
-      "signal_id": "KRW-APT|2026-09-29T20:30:00",
-      "signal_candle": "2026-09-29T20:30:00",
-      "created_at": "2026-09-29T20:49:37.025685+09:00",
-      "score": 91,
-      "direction": "LONG"
-    },
-    "KRW-AXS": {
-      "market": "KRW-AXS",
-      "entry": 1573.0,
-      "stop": 1561.0330068741605,
-      "tp1": 1590.9504896887593,
-      "tp2": 1596.933986251679,
-      "tp3": 1608.9009793775185,
-      "stage": "ENTRY",
-      "signal_id": "KRW-AXS|2026-09-29T20:30:00",
-      "signal_candle": "2026-09-29T20:30:00",
-      "created_at": "2026-09-29T20:49:42.922040+09:00",
-      "score": 76,
-      "direction": "LONG"
-    },
     "KRW-SEI": {
       "market": "KRW-SEI",
       "entry": 103.0,
@@ -867,28 +797,14 @@
       "score": 75,
       "direction": "LONG"
     },
-    "KRW-FIL": {
-      "market": "KRW-FIL",
-      "entry": 1471.0,
-      "stop": 1456.1658381667012,
-      "tp1": 1493.2512427499482,
-      "tp2": 1500.6683236665976,
-      "tp3": 1515.5024854998965,
-      "stage": "ENTRY",
-      "signal_id": "KRW-FIL|2026-09-29T20:30:00",
-      "signal_candle": "2026-09-29T20:30:00",
-      "created_at": "2026-09-29T20:50:10.992038+09:00",
-      "score": 82,
-      "direction": "LONG"
-    },
     "KRW-POL": {
       "market": "KRW-POL",
       "entry": 161.0,
-      "stop": 161.0,
+      "stop": 164.0225509576409,
       "tp1": 164.0225509576409,
       "tp2": 165.0300679435212,
       "tp3": 167.0451019152818,
-      "stage": "TP1",
+      "stage": "TP2",
       "signal_id": "KRW-POL|2026-09-29T20:30:00",
       "signal_candle": "2026-09-29T20:30:00",
       "created_at": "2026-09-29T20:50:22.854618+09:00",
@@ -921,20 +837,6 @@
       "signal_candle": "2026-09-29T20:30:00",
       "created_at": "2026-09-29T20:59:57.798227+09:00",
       "score": 85,
-      "direction": "LONG"
-    },
-    "KRW-BERA": {
-      "market": "KRW-BERA",
-      "entry": 306.0,
-      "stop": 302.7957853763673,
-      "tp1": 310.8063219354491,
-      "tp2": 312.4084292472654,
-      "tp3": 315.6126438708981,
-      "stage": "ENTRY",
-      "signal_id": "KRW-BERA|2026-09-29T20:30:00",
-      "signal_candle": "2026-09-29T20:30:00",
-      "created_at": "2026-09-29T21:00:07.577922+09:00",
-      "score": 77,
       "direction": "LONG"
     },
     "KRW-ETC": {
@@ -1190,6 +1092,62 @@
       "score": 95,
       "signal_id": "KRW-XRP|2026-09-29T21:30:00",
       "created_at": "2026-09-29T21:37:29.834429+09:00"
+    },
+    {
+      "market": "KRW-COW",
+      "result": "SL",
+      "entry": 221.0,
+      "exit": 218.0,
+      "pnl_pct": -1.3574660633484164,
+      "closed_at": "2026-09-29T21:53:49.246186+09:00"
+    },
+    {
+      "market": "KRW-PROS",
+      "result": "SL",
+      "entry": 910.0,
+      "exit": 896.0,
+      "pnl_pct": -1.5384615384615385,
+      "closed_at": "2026-09-29T21:53:56.195596+09:00"
+    },
+    {
+      "market": "KRW-XLM",
+      "result": "SL",
+      "entry": 321.0,
+      "exit": 315.0,
+      "pnl_pct": -1.8691588785046727,
+      "closed_at": "2026-09-29T21:53:58.612962+09:00"
+    },
+    {
+      "market": "KRW-APT",
+      "result": "SL",
+      "entry": 1149.0,
+      "exit": 1136.0,
+      "pnl_pct": -1.1314186248912097,
+      "closed_at": "2026-09-29T21:54:02.160435+09:00"
+    },
+    {
+      "market": "KRW-AXS",
+      "result": "SL",
+      "entry": 1573.0,
+      "exit": 1552.0,
+      "pnl_pct": -1.3350286077558804,
+      "closed_at": "2026-09-29T21:54:03.279503+09:00"
+    },
+    {
+      "market": "KRW-FIL",
+      "result": "SL",
+      "entry": 1471.0,
+      "exit": 1454.0,
+      "pnl_pct": -1.1556764106050306,
+      "closed_at": "2026-09-29T21:54:04.979951+09:00"
+    },
+    {
+      "market": "KRW-BERA",
+      "result": "SL",
+      "entry": 306.0,
+      "exit": 301.0,
+      "pnl_pct": -1.6339869281045754,
+      "closed_at": "2026-09-29T21:54:08.329479+09:00"
     }
   ],
   "sent_signal_ids": [
