@@ -699,34 +699,6 @@
       "score": 100,
       "direction": "LONG"
     },
-    "KRW-XPL": {
-      "market": "KRW-XPL",
-      "entry": 139.0,
-      "stop": 135.87220612685866,
-      "tp1": 143.69169080971201,
-      "tp2": 145.25558774628269,
-      "tp3": 148.38338161942403,
-      "stage": "ENTRY",
-      "signal_id": "KRW-XPL|2026-09-29T20:30:00",
-      "signal_candle": "2026-09-29T20:30:00",
-      "created_at": "2026-09-29T20:48:52.955934+09:00",
-      "score": 77,
-      "direction": "LONG"
-    },
-    "KRW-NEAR": {
-      "market": "KRW-NEAR",
-      "entry": 6645.0,
-      "stop": 6546.758843173551,
-      "tp1": 6792.361735239673,
-      "tp2": 6841.482313652898,
-      "tp3": 6939.723470479346,
-      "stage": "ENTRY",
-      "signal_id": "KRW-NEAR|2026-09-29T20:30:00",
-      "signal_candle": "2026-09-29T20:30:00",
-      "created_at": "2026-09-29T20:48:55.401554+09:00",
-      "score": 87,
-      "direction": "LONG"
-    },
     "KRW-ADA": {
       "market": "KRW-ADA",
       "entry": 344.0,
@@ -767,20 +739,6 @@
       "signal_candle": "2026-09-29T20:30:00",
       "created_at": "2026-09-29T20:49:50.547818+09:00",
       "score": 75,
-      "direction": "LONG"
-    },
-    "KRW-POL": {
-      "market": "KRW-POL",
-      "entry": 161.0,
-      "stop": 164.0225509576409,
-      "tp1": 164.0225509576409,
-      "tp2": 165.0300679435212,
-      "tp3": 167.0451019152818,
-      "stage": "TP2",
-      "signal_id": "KRW-POL|2026-09-29T20:30:00",
-      "signal_candle": "2026-09-29T20:30:00",
-      "created_at": "2026-09-29T20:50:22.854618+09:00",
-      "score": 77,
       "direction": "LONG"
     },
     "KRW-FLUID": {
@@ -1136,6 +1094,30 @@
       "exit": 92.3,
       "pnl_pct": -1.4941302027748193,
       "closed_at": "2026-09-29T22:01:36.383019+09:00"
+    },
+    {
+      "market": "KRW-XPL",
+      "result": "SL",
+      "entry": 139.0,
+      "exit": 135.0,
+      "pnl_pct": -2.877697841726619,
+      "closed_at": "2026-09-29T22:05:11.451806+09:00"
+    },
+    {
+      "market": "KRW-NEAR",
+      "result": "SL",
+      "entry": 6645.0,
+      "exit": 6540.0,
+      "pnl_pct": -1.580135440180587,
+      "closed_at": "2026-09-29T22:05:12.560188+09:00"
+    },
+    {
+      "market": "KRW-POL",
+      "result": "TP3",
+      "entry": 161.0,
+      "exit": 167.0451019152818,
+      "pnl_pct": 3.754721686510438,
+      "closed_at": "2026-09-29T22:05:15.377796+09:00"
     }
   ],
   "sent_signal_ids": [
