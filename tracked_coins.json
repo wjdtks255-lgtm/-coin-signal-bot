@@ -629,20 +629,6 @@
       "score": 75,
       "direction": "LONG"
     },
-    "KRW-ARK": {
-      "market": "KRW-ARK",
-      "entry": 333.0,
-      "stop": 328.20693895862684,
-      "tp1": 340.1895915620597,
-      "tp2": 342.58612208274633,
-      "tp3": 347.3791831241195,
-      "stage": "ENTRY",
-      "signal_id": "KRW-ARK|2026-09-29T19:45:00",
-      "signal_candle": "2026-09-29T19:45:00",
-      "created_at": "2026-09-29T20:13:29.999260+09:00",
-      "score": 80,
-      "direction": "LONG"
-    },
     "KRW-CFG": {
       "market": "KRW-CFG",
       "entry": 220.0,
@@ -697,20 +683,6 @@
       "signal_candle": "2026-09-29T20:15:00",
       "created_at": "2026-09-29T20:35:17.943625+09:00",
       "score": 75,
-      "direction": "LONG"
-    },
-    "KRW-2Z": {
-      "market": "KRW-2Z",
-      "entry": 93.7,
-      "stop": 92.46302183135745,
-      "tp1": 95.55546725296384,
-      "tp2": 96.1739563372851,
-      "tp3": 97.41093450592766,
-      "stage": "ENTRY",
-      "signal_id": "KRW-2Z|2026-09-29T20:15:00",
-      "signal_candle": "2026-09-29T20:15:00",
-      "created_at": "2026-09-29T20:36:29.948501+09:00",
-      "score": 85,
       "direction": "LONG"
     },
     "KRW-AAVE": {
@@ -1148,6 +1120,22 @@
       "exit": 301.0,
       "pnl_pct": -1.6339869281045754,
       "closed_at": "2026-09-29T21:54:08.329479+09:00"
+    },
+    {
+      "market": "KRW-ARK",
+      "result": "SL",
+      "entry": 333.0,
+      "exit": 328.0,
+      "pnl_pct": -1.5015015015015014,
+      "closed_at": "2026-09-29T22:01:33.535966+09:00"
+    },
+    {
+      "market": "KRW-2Z",
+      "result": "SL",
+      "entry": 93.7,
+      "exit": 92.3,
+      "pnl_pct": -1.4941302027748193,
+      "closed_at": "2026-09-29T22:01:36.383019+09:00"
     }
   ],
   "sent_signal_ids": [
