@@ -1,43 +1,27 @@
 import os
 import json
 import time
-import math
 import requests
-import numpy as np
 import pandas as pd
-from datetime import datetime, timezone, timedelta
-
-
-# ============================================================
-# UPBIT SMART SIGNAL BOT V5
-# ============================================================
-#
-# FIXED:
-# 1. Upbit daily candle API
-# 2. Legacy position migration
-# 3. Never silently delete old positions
-# 4. Score capped at 100
-# 5. Duplicate signal protection
-# 6. ENTRY / TP1 / TP2 / TP3 / SL tracking
-# 7. BTC market regime
-# 8. Full KRW fast scan + deep scan
-#
-# ============================================================
-
+import numpy as np
+from datetime import datetime, timedelta, timezone
 
 # ============================================================
-# CONFIG
+# UPBIT SMART SIGNAL BOT V5.1
 # ============================================================
 
-CACHE_FILE = "tracked_coins.json"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+STATE_FILE = "tracked_coins.json"
 
-UPBIT_BASE_URL = "https://api.upbit.com/v1"
+UPBIT_API = "https://api.upbit.com/v1"
+
+# ============================================================
+# SETTINGS
+# ============================================================
 
 MAX_DEEP_SCAN = 80
-
 MIN_FINAL_24H_TRADE_VALUE = 1_000_000_000
 
 SIGNAL_SCORE = 75
@@ -70,82 +54,76 @@ KST = timezone(timedelta(hours=9))
 
 
 # ============================================================
-# BASIC HELPERS
+# TIME
 # ============================================================
 
 def now_kst():
     return datetime.now(KST)
 
 
-def safe_float(value, default=0.0):
-    try:
-        if value is None:
-            return default
-
-        if isinstance(value, str):
-            value = (
-                value
-                .replace(",", "")
-                .replace("%", "")
-                .strip()
-            )
-
-        result = float(value)
-
-        if not math.isfinite(result):
-            return default
-
-        return result
-
-    except Exception:
-        return default
-
-
-def safe_int(value, default=0):
-    try:
-        return int(value)
-    except Exception:
-        return default
-
-
-def pct_change(old, new):
-    old = safe_float(old)
-    new = safe_float(new)
-
-    if old == 0:
-        return 0.0
-
-    return (
-        (new / old) - 1.0
-    ) * 100.0
-
-
-def clamp_score(score):
-    return max(
-        0,
-        min(
-            100,
-            int(round(score))
-        )
-    )
-
+# ============================================================
+# FORMAT
+# ============================================================
 
 def fmt_price(price):
-    price = safe_float(price)
+    if price is None:
+        return "-"
+
+    price = float(price)
 
     if price >= 1000:
         return f"{price:,.0f}"
-
-    if price >= 100:
+    elif price >= 100:
         return f"{price:,.1f}"
-
-    if price >= 1:
+    elif price >= 10:
+        return f"{price:,.2f}"
+    elif price >= 1:
         return f"{price:,.3f}"
+    else:
+        return f"{price:,.6f}"
 
-    if price >= 0.01:
-        return f"{price:,.5f}"
 
-    return f"{price:,.8f}"
+# ============================================================
+# TELEGRAM
+# ============================================================
+
+def send_telegram(message):
+
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram 설정 없음")
+        return False
+
+    url = (
+        f"https://api.telegram.org/bot"
+        f"{TELEGRAM_TOKEN}/sendMessage"
+    )
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=15
+        )
+
+        if response.status_code == 200:
+            return True
+
+        print(
+            "Telegram 오류:",
+            response.status_code,
+            response.text[:500]
+        )
+
+    except Exception as e:
+        print("Telegram 전송 오류:", e)
+
+    return False
 
 
 # ============================================================
@@ -153,6 +131,7 @@ def fmt_price(price):
 # ============================================================
 
 def default_state():
+
     return {
         "positions": {},
         "history": [],
@@ -163,13 +142,12 @@ def default_state():
 
 def load_state():
 
-    if not os.path.exists(CACHE_FILE):
+    if not os.path.exists(STATE_FILE):
         return default_state()
 
     try:
-
         with open(
-            CACHE_FILE,
+            STATE_FILE,
             "r",
             encoding="utf-8"
         ) as f:
@@ -179,72 +157,28 @@ def load_state():
         if not isinstance(data, dict):
             return default_state()
 
-        data.setdefault(
-            "positions",
-            {}
-        )
-
-        data.setdefault(
-            "history",
-            []
-        )
-
-        data.setdefault(
-            "sent_signal_ids",
-            []
-        )
-
-        data.setdefault(
-            "legacy_positions",
-            {}
-        )
-
-        if not isinstance(
-            data["positions"],
-            dict
-        ):
-            data["positions"] = {}
-
-        if not isinstance(
-            data["history"],
-            list
-        ):
-            data["history"] = []
-
-        if not isinstance(
-            data["sent_signal_ids"],
-            list
-        ):
-            data["sent_signal_ids"] = []
-
-        if not isinstance(
-            data["legacy_positions"],
-            dict
-        ):
-            data["legacy_positions"] = {}
+        data.setdefault("positions", {})
+        data.setdefault("history", [])
+        data.setdefault("sent_signal_ids", [])
+        data.setdefault("legacy_positions", {})
 
         return data
 
     except Exception as e:
 
-        print(
-            f"[STATE ERROR] {e}"
-        )
+        print("상태 파일 읽기 오류:", e)
 
         return default_state()
 
 
 def save_state(state):
 
-    temp_file = (
-        CACHE_FILE +
-        ".tmp"
-    )
+    tmp_file = STATE_FILE + ".tmp"
 
     try:
 
         with open(
-            temp_file,
+            tmp_file,
             "w",
             encoding="utf-8"
         ) as f:
@@ -257,380 +191,164 @@ def save_state(state):
             )
 
         os.replace(
-            temp_file,
-            CACHE_FILE
+            tmp_file,
+            STATE_FILE
         )
 
     except Exception as e:
 
-        print(
-            f"[STATE SAVE ERROR] {e}"
-        )
+        print("상태 저장 오류:", e)
 
 
 # ============================================================
 # LEGACY POSITION MIGRATION
 # ============================================================
 
-def first_existing(
-    raw,
-    keys,
-    default=0
-):
+def first_value(data, keys):
 
     for key in keys:
 
-        if key in raw:
+        if key in data:
 
-            value = raw.get(key)
+            value = data.get(key)
 
-            if value not in (
-                None,
-                "",
-                0,
-                "0"
-            ):
+            if value is not None:
 
-                return value
+                try:
+                    return float(value)
+                except:
+                    pass
 
-    return default
+    return None
 
 
-def normalize_position(
-    market,
-    raw
-):
+def normalize_position(position):
 
-    if not isinstance(
-        raw,
-        dict
-    ):
+    if not isinstance(position, dict):
+        return None
 
-        print(
-            f"[TRACK WAIT] "
-            f"{market}: invalid position"
-        )
+    entry = first_value(
+        position,
+        [
+            "entry",
+            "entry_price",
+            "buy_price",
+            "price",
+            "avg_price",
+            "average_price"
+        ]
+    )
 
+    stop = first_value(
+        position,
+        [
+            "stop",
+            "sl",
+            "stop_loss",
+            "stop_price",
+            "stopPrice"
+        ]
+    )
+
+    tp1 = first_value(
+        position,
+        [
+            "tp1",
+            "target1",
+            "target_1",
+            "take_profit_1",
+            "takeProfit1",
+            "take_profit"
+        ]
+    )
+
+    tp2 = first_value(
+        position,
+        [
+            "tp2",
+            "target2",
+            "target_2",
+            "take_profit_2",
+            "takeProfit2"
+        ]
+    )
+
+    tp3 = first_value(
+        position,
+        [
+            "tp3",
+            "target3",
+            "target_3",
+            "take_profit_3",
+            "takeProfit3"
+        ]
+    )
+
+    if entry is None:
         return None
 
     # --------------------------------------------------------
-    # ENTRY
+    # 기존 포지션에 TP1은 있지만 SL이 없는 경우 복구
     # --------------------------------------------------------
 
-    entry = safe_float(
-        first_existing(
-            raw,
-            [
-                "entry",
-                "entry_price",
-                "buy_price",
-                "price",
-                "avg_price",
-                "average_price"
-            ]
-        )
+    if stop is None and tp1 is not None and tp1 > entry:
+
+        risk = (tp1 - entry) / 1.5
+
+        stop = entry - risk
+
+    # --------------------------------------------------------
+    # TP1이 없는 경우 SL 또는 기본 위험값으로 복구
+    # --------------------------------------------------------
+
+    if tp1 is None:
+
+        if stop is not None and stop < entry:
+
+            risk = entry - stop
+
+        else:
+
+            risk = entry * 0.03
+
+        tp1 = entry + risk * 1.5
+
+    # --------------------------------------------------------
+    # TP2 / TP3 복구
+    # --------------------------------------------------------
+
+    if tp2 is None:
+
+        risk = tp1 - entry
+        tp2 = entry + (risk / 1.5) * 2.0
+
+    if tp3 is None:
+
+        risk = tp1 - entry
+        tp3 = entry + (risk / 1.5) * 3.0
+
+    if stop is None:
+
+        risk = (tp1 - entry) / 1.5
+        stop = entry - risk
+
+    normalized = dict(position)
+
+    normalized["entry"] = entry
+    normalized["stop"] = stop
+    normalized["tp1"] = tp1
+    normalized["tp2"] = tp2
+    normalized["tp3"] = tp3
+
+    normalized.setdefault(
+        "stage",
+        "ENTRY"
     )
 
-    if entry <= 0:
-
-        print(
-            f"[TRACK WAIT] "
-            f"{market}: entry missing"
-        )
-
-        return None
-
-    # --------------------------------------------------------
-    # STOP
-    # --------------------------------------------------------
-
-    stop = safe_float(
-        first_existing(
-            raw,
-            [
-                "stop",
-                "sl",
-                "stop_loss",
-                "stop_price",
-                "stopPrice"
-            ]
-        )
+    normalized.setdefault(
+        "direction",
+        "LONG"
     )
-
-    # --------------------------------------------------------
-    # TP1
-    # --------------------------------------------------------
-
-    tp1 = safe_float(
-        first_existing(
-            raw,
-            [
-                "tp1",
-                "target1",
-                "target_1",
-                "take_profit_1",
-                "takeProfit1",
-                "take_profit"
-            ]
-        )
-    )
-
-    # --------------------------------------------------------
-    # TP2
-    # --------------------------------------------------------
-
-    tp2 = safe_float(
-        first_existing(
-            raw,
-            [
-                "tp2",
-                "target2",
-                "target_2",
-                "take_profit_2",
-                "takeProfit2"
-            ]
-        )
-    )
-
-    # --------------------------------------------------------
-    # TP3
-    # --------------------------------------------------------
-
-    tp3 = safe_float(
-        first_existing(
-            raw,
-            [
-                "tp3",
-                "target3",
-                "target_3",
-                "take_profit_3",
-                "takeProfit3"
-            ]
-        )
-    )
-
-    # --------------------------------------------------------
-    # OLD POSITION REPAIR
-    #
-    # If SL missing but ENTRY + TP1 exist:
-    #
-    # TP1 = ENTRY + 1.5R
-    #
-    # therefore:
-    #
-    # R = (TP1 - ENTRY) / 1.5
-    # SL = ENTRY - R
-    # --------------------------------------------------------
-
-    if stop <= 0 and tp1 > entry:
-
-        risk = (
-            tp1 - entry
-        ) / 1.5
-
-        if risk > 0:
-
-            stop = (
-                entry - risk
-            )
-
-            print(
-                f"[MIGRATION] "
-                f"{market}: "
-                f"SL reconstructed"
-            )
-
-    # --------------------------------------------------------
-    # If still missing stop
-    # --------------------------------------------------------
-
-    if stop <= 0:
-
-        print(
-            f"[TRACK WAIT] "
-            f"{market}: "
-            f"SL unavailable"
-        )
-
-        return None
-
-    # --------------------------------------------------------
-    # If TP1 missing, reconstruct
-    # --------------------------------------------------------
-
-    risk = abs(
-        entry - stop
-    )
-
-    if risk <= 0:
-
-        print(
-            f"[TRACK WAIT] "
-            f"{market}: invalid risk"
-        )
-
-        return None
-
-    if tp1 <= 0:
-
-        tp1 = (
-            entry +
-            risk * 1.5
-        )
-
-        print(
-            f"[MIGRATION] "
-            f"{market}: "
-            f"TP1 reconstructed"
-        )
-
-    # --------------------------------------------------------
-    # TP2
-    # --------------------------------------------------------
-
-    if tp2 <= 0:
-
-        tp2 = (
-            entry +
-            risk * 2.0
-        )
-
-    # --------------------------------------------------------
-    # TP3
-    # --------------------------------------------------------
-
-    if tp3 <= 0:
-
-        tp3 = (
-            entry +
-            risk * 3.0
-        )
-
-    # --------------------------------------------------------
-    # STAGE
-    # --------------------------------------------------------
-
-    stage = str(
-        raw.get(
-            "stage",
-            raw.get(
-                "status",
-                "ENTRY"
-            )
-        )
-    ).upper()
-
-    if stage in (
-        "OPEN",
-        "ACTIVE",
-        "NEW"
-    ):
-
-        stage = "ENTRY"
-
-    if stage not in (
-        "ENTRY",
-        "TP1",
-        "TP2"
-    ):
-
-        stage = "ENTRY"
-
-    # --------------------------------------------------------
-    # SIGNAL CANDLE
-    # --------------------------------------------------------
-
-    signal_candle = raw.get(
-        "signal_candle",
-        raw.get(
-            "candle_time",
-            raw.get(
-                "candle",
-                ""
-            )
-        )
-    )
-
-    # --------------------------------------------------------
-    # SIGNAL ID
-    # --------------------------------------------------------
-
-    signal_id = raw.get(
-        "signal_id",
-        ""
-    )
-
-    if not signal_id and signal_candle:
-
-        signal_id = (
-            f"{market}|"
-            f"{signal_candle}"
-        )
-
-    # --------------------------------------------------------
-    # CREATED TIME
-    # --------------------------------------------------------
-
-    created_at = raw.get(
-        "created_at",
-        raw.get(
-            "entry_time",
-            raw.get(
-                "time",
-                now_kst().isoformat()
-            )
-        )
-    )
-
-    # --------------------------------------------------------
-    # SCORE
-    # --------------------------------------------------------
-
-    score = safe_int(
-        raw.get(
-            "score",
-            raw.get(
-                "signal_score",
-                0
-            )
-        )
-    )
-
-    # --------------------------------------------------------
-    # CANONICAL RECORD
-    # --------------------------------------------------------
-
-    normalized = {
-
-        "market": market,
-
-        "entry": entry,
-
-        "stop": stop,
-
-        "tp1": tp1,
-
-        "tp2": tp2,
-
-        "tp3": tp3,
-
-        "stage": stage,
-
-        "signal_id": signal_id,
-
-        "signal_candle": signal_candle,
-
-        "created_at": created_at,
-
-        "score": clamp_score(
-            score
-        ),
-
-        "direction": raw.get(
-            "direction",
-            "LONG"
-        )
-    }
 
     return normalized
 
@@ -642,216 +360,102 @@ def migrate_positions(state):
         {}
     )
 
-    if not isinstance(
-        positions,
-        dict
-    ):
+    invalid = {}
 
-        return
+    for market, position in list(positions.items()):
 
-    migrated = {}
+        normalized = normalize_position(position)
 
-    legacy = state.get(
-        "legacy_positions",
-        {}
-    )
+        if normalized is None:
 
-    if not isinstance(
-        legacy,
-        dict
-    ):
+            invalid[market] = position
+            del positions[market]
 
-        legacy = {}
+            continue
 
-    original_count = len(
-        positions
-    )
+        positions[market] = normalized
 
-    for market, raw in positions.items():
+    if invalid:
 
-        normalized = normalize_position(
-            market,
-            raw
+        legacy = state.setdefault(
+            "legacy_positions",
+            {}
         )
 
-        if normalized is not None:
+        for market, position in invalid.items():
 
-            migrated[
-                market
-            ] = normalized
+            legacy[market] = position
 
-        else:
-
-            # IMPORTANT:
-            # Never silently delete.
-            legacy[
-                market
-            ] = raw
-
-            print(
-                f"[LEGACY KEEP] "
-                f"{market}"
-            )
-
-    state[
-        "positions"
-    ] = migrated
-
-    state[
-        "legacy_positions"
-    ] = legacy
-
-    print(
-        f"[MIGRATION] "
-        f"{original_count} → "
-        f"{len(migrated)} active"
-    )
-
-    if legacy:
-
-        print(
-            f"[LEGACY] "
-            f"{len(legacy)} "
-            f"positions preserved"
-        )
+    return state
 
 
 # ============================================================
-# TELEGRAM
+# SIGNAL HISTORY
 # ============================================================
 
-def send_telegram(
-    message
-):
+def signal_already_sent(state, signal_id):
 
-    if (
-        not TELEGRAM_TOKEN
-        or not TELEGRAM_CHAT_ID
-    ):
-
-        print(
-            "[TELEGRAM] "
-            "TOKEN/CHAT_ID missing"
-        )
-
-        return False
-
-    url = (
-        "https://api.telegram.org/bot"
-        f"{TELEGRAM_TOKEN}"
-        "/sendMessage"
+    ids = state.get(
+        "sent_signal_ids",
+        []
     )
 
-    payload = {
+    return signal_id in ids
 
-        "chat_id":
-            TELEGRAM_CHAT_ID,
 
-        "text":
-            message,
+def remember_signal(state, signal_id):
 
-        "parse_mode":
-            "HTML"
-    }
+    ids = state.setdefault(
+        "sent_signal_ids",
+        []
+    )
 
-    try:
+    if signal_id not in ids:
 
-        response = requests.post(
-            url,
-            json=payload,
-            timeout=15
-        )
+        ids.append(signal_id)
 
-        if response.ok:
-
-            print(
-                "[TELEGRAM] "
-                "전송 성공"
-            )
-
-            return True
-
-        print(
-            f"[TELEGRAM ERROR] "
-            f"{response.status_code}: "
-            f"{response.text[:300]}"
-        )
-
-    except Exception as e:
-
-        print(
-            f"[TELEGRAM ERROR] "
-            f"{e}"
-        )
-
-    return False
+    # 너무 커지지 않도록 최근 1000개만 유지
+    state["sent_signal_ids"] = ids[-1000:]
 
 
 # ============================================================
 # UPBIT API
 # ============================================================
 
-def upbit_get(
-    endpoint,
-    params=None
-):
+def get_markets():
 
-    url = (
-        UPBIT_BASE_URL +
-        endpoint
-    )
+    url = f"{UPBIT_API}/market/all"
 
     try:
 
         response = requests.get(
             url,
-            params=params or {},
+            params={
+                "isDetails": "false"
+            },
             timeout=15
         )
 
         response.raise_for_status()
 
-        return response.json()
+        data = response.json()
+
+        return [
+            x["market"]
+            for x in data
+            if x["market"].startswith("KRW-")
+        ]
 
     except Exception as e:
 
-        print(
-            f"[API ERROR] "
-            f"{endpoint}: {e}"
-        )
-
-        return None
-
-
-def get_markets():
-
-    data = upbit_get(
-        "/market/all",
-        {
-            "isDetails": "false"
-        }
-    )
-
-    if not data:
+        print("마켓 조회 오류:", e)
 
         return []
 
-    return [
-        x["market"]
-        for x in data
-        if x.get(
-            "market",
-            ""
-        ).startswith("KRW-")
-    ]
 
-
-def get_tickers(
-    markets
-):
+def get_tickers(markets):
 
     if not markets:
-
         return []
 
     result = []
@@ -862,34 +466,30 @@ def get_tickers(
         100
     ):
 
-        batch = markets[
-            i:i + 100
-        ]
+        chunk = markets[i:i + 100]
 
-        data = upbit_get(
-            "/ticker",
-            {
-                "markets":
-                    ",".join(batch)
-            }
-        )
+        try:
 
-        if data:
-
-            result.extend(
-                data
+            response = requests.get(
+                f"{UPBIT_API}/ticker",
+                params={
+                    "markets": ",".join(chunk)
+                },
+                timeout=15
             )
 
-        time.sleep(
-            0.05
-        )
+            response.raise_for_status()
+
+            result.extend(
+                response.json()
+            )
+
+        except Exception as e:
+
+            print("Ticker 오류:", e)
 
     return result
 
-
-# ============================================================
-# CANDLE API
-# ============================================================
 
 def get_candles(
     market,
@@ -897,197 +497,92 @@ def get_candles(
     count=200
 ):
 
+    # 일봉
+    if unit == 1440:
+
+        url = (
+            f"{UPBIT_API}/candles/days"
+        )
+
+        params = {
+            "market": market,
+            "count": min(count, 200)
+        }
+
+    else:
+
+        allowed = {
+            1,
+            3,
+            5,
+            10,
+            15,
+            30,
+            60,
+            240
+        }
+
+        if unit not in allowed:
+            return pd.DataFrame()
+
+        url = (
+            f"{UPBIT_API}/candles/minutes/{unit}"
+        )
+
+        params = {
+            "market": market,
+            "count": min(count, 200)
+        }
+
     try:
 
-        # ----------------------------------------------------
-        # DAILY CANDLES
-        # ----------------------------------------------------
-
-        if unit in (
-            1440,
-            "1D",
-            "D",
-            "day",
-            "days"
-        ):
-
-            endpoint = (
-                "/candles/days"
-            )
-
-            params = {
-
-                "market":
-                    market,
-
-                "count":
-                    min(
-                        int(count),
-                        200
-                    )
-            }
-
-        # ----------------------------------------------------
-        # MINUTE CANDLES
-        # ----------------------------------------------------
-
-        else:
-
-            minute_unit = int(
-                unit
-            )
-
-            allowed = {
-                1,
-                3,
-                5,
-                10,
-                15,
-                30,
-                60,
-                240
-            }
-
-            if (
-                minute_unit
-                not in allowed
-            ):
-
-                print(
-                    f"[CANDLE ERROR] "
-                    f"Unsupported unit "
-                    f"{minute_unit}"
-                )
-
-                return None
-
-            endpoint = (
-                "/candles/minutes/"
-                f"{minute_unit}"
-            )
-
-            params = {
-
-                "market":
-                    market,
-
-                "count":
-                    min(
-                        int(count),
-                        200
-                    )
-            }
-
-        data = upbit_get(
-            endpoint,
-            params
+        response = requests.get(
+            url,
+            params=params,
+            timeout=15
         )
+
+        response.raise_for_status()
+
+        data = response.json()
 
         if not data:
+            return pd.DataFrame()
 
-            return None
+        df = pd.DataFrame(data)
 
-        df = pd.DataFrame(
-            data
-        )
-
-        if df.empty:
-
-            return None
-
-        # newest -> oldest
-        # convert oldest -> newest
-        df = (
-            df.iloc[::-1]
-            .reset_index(
-                drop=True
-            )
-        )
-
-        df.rename(
+        df = df.rename(
             columns={
-
-                "opening_price":
-                    "open",
-
-                "high_price":
-                    "high",
-
-                "low_price":
-                    "low",
-
-                "trade_price":
-                    "close",
-
-                "candle_acc_trade_volume":
-                    "volume",
-
-                "candle_date_time_kst":
-                    "time"
-            },
-            inplace=True
+                "opening_price": "open",
+                "high_price": "high",
+                "low_price": "low",
+                "trade_price": "close",
+                "candle_acc_trade_volume": "volume",
+                "candle_acc_trade_price": "value"
+            }
         )
 
-        required = [
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume"
-        ]
-
-        for col in required:
-
-            if col not in df.columns:
-
-                print(
-                    f"[CANDLE ERROR] "
-                    f"{market}: "
-                    f"{col} missing"
-                )
-
-                return None
-
-            df[col] = pd.to_numeric(
-                df[col],
-                errors="coerce"
-            )
-
-        df.dropna(
-            subset=required,
-            inplace=True
-        )
-
-        df.reset_index(
-            drop=True,
-            inplace=True
-        )
-
-        if df.empty:
-
-            return None
+        df = df.sort_values(
+            "candle_date_time_kst"
+        ).reset_index(drop=True)
 
         return df
 
     except Exception as e:
 
         print(
-            f"[CANDLE ERROR] "
-            f"{market}/{unit}: "
-            f"{e}"
+            f"캔들 오류 {market} {unit}:",
+            e
         )
 
-        return None
+        return pd.DataFrame()
 
 
 # ============================================================
 # INDICATORS
 # ============================================================
 
-def ema(
-    series,
-    length
-):
+def ema(series, length):
 
     return series.ewm(
         span=length,
@@ -1095,14 +590,9 @@ def ema(
     ).mean()
 
 
-def rsi(
-    series,
-    length=14
-):
+def rsi(series, length=14):
 
-    delta = (
-        series.diff()
-    )
+    delta = series.diff()
 
     gain = delta.clip(
         lower=0
@@ -1122,60 +612,71 @@ def rsi(
         adjust=False
     ).mean()
 
-    rs = (
-        avg_gain /
-        avg_loss.replace(
-            0,
-            np.nan
-        )
+    rs = avg_gain / avg_loss.replace(
+        0,
+        np.nan
     )
 
-    result = (
-        100 -
-        (
-            100 /
-            (1 + rs)
-        )
+    result = 100 - (
+        100 / (1 + rs)
     )
 
     return result.fillna(50)
 
 
-def atr(
-    df,
-    length=14
-):
+def atr(df, length=14):
 
-    previous_close = (
-        df["close"].shift(1)
-    )
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
+
+    prev_close = close.shift(1)
 
     tr = pd.concat(
         [
-
-            df["high"] -
-            df["low"],
-
-            (
-                df["high"] -
-                previous_close
-            ).abs(),
-
-            (
-                df["low"] -
-                previous_close
-            ).abs()
-
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs()
         ],
         axis=1
-    ).max(
-        axis=1
-    )
+    ).max(axis=1)
 
     return tr.ewm(
         alpha=1 / length,
         adjust=False
     ).mean()
+
+
+# ============================================================
+# TIMEFRAME ANALYSIS
+# ============================================================
+
+def timeframe_trend(df):
+
+    if df.empty or len(df) < 60:
+        return "FAIL"
+
+    close = df["close"]
+
+    ema20 = ema(
+        close,
+        20
+    )
+
+    ema50 = ema(
+        close,
+        50
+    )
+
+    last = close.iloc[-1]
+
+    if (
+        last > ema20.iloc[-1]
+        and ema20.iloc[-1] > ema50.iloc[-1]
+    ):
+        return "PASS"
+
+    return "FAIL"
 
 
 # ============================================================
@@ -1187,267 +688,153 @@ def get_btc_regime():
     df15 = get_candles(
         "KRW-BTC",
         15,
-        120
+        100
     )
 
-    df1h = get_candles(
+    df60 = get_candles(
         "KRW-BTC",
         60,
-        120
+        100
     )
 
     if (
-        df15 is None
-        or df1h is None
-        or len(df15) < 60
-        or len(df1h) < 60
+        df15.empty
+        or df60.empty
+        or len(df15) < 20
+        or len(df60) < 20
     ):
 
-        return {
+        return "NEUTRAL", 0, 0
 
-            "regime":
-                "NEUTRAL",
-
-            "score":
-                50,
-
-            "change15":
-                0,
-
-            "change1h":
-                0
-        }
-
-    change15 = pct_change(
-        df15["close"].iloc[-10],
+    btc15 = (
+        df15["close"].iloc[-1]
+        /
         df15["close"].iloc[-2]
-    )
+        - 1
+    ) * 100
 
-    change1h = pct_change(
-        df1h["close"].iloc[-5],
-        df1h["close"].iloc[-2]
-    )
-
-    df15["ema20"] = ema(
-        df15["close"],
-        20
-    )
-
-    df15["ema50"] = ema(
-        df15["close"],
-        50
-    )
-
-    df1h["ema20"] = ema(
-        df1h["close"],
-        20
-    )
-
-    df1h["ema50"] = ema(
-        df1h["close"],
-        50
-    )
-
-    score = 50
+    btc1h = (
+        df60["close"].iloc[-1]
+        /
+        df60["close"].iloc[-2]
+        - 1
+    ) * 100
 
     if (
-        df15["ema20"].iloc[-2]
-        >
-        df15["ema50"].iloc[-2]
+        btc15 <= BTC_15M_CRASH_PCT
+        or btc1h <= BTC_1H_CRASH_PCT
     ):
 
-        score += 10
-
-    else:
-
-        score -= 10
+        return (
+            "CRASH",
+            btc15,
+            btc1h
+        )
 
     if (
-        df1h["ema20"].iloc[-2]
-        >
-        df1h["ema50"].iloc[-2]
+        btc15 < -0.7
+        or btc1h < -1.0
     ):
 
-        score += 15
-
-    else:
-
-        score -= 15
-
-    if change15 > 0:
-
-        score += 5
-
-    else:
-
-        score -= 5
-
-    if change1h > 0:
-
-        score += 10
-
-    else:
-
-        score -= 10
-
-    score = max(
-        0,
-        min(
-            100,
-            score
+        return (
+            "WEAK",
+            btc15,
+            btc1h
         )
-    )
 
     if (
-        change15 <=
-        BTC_15M_CRASH_PCT
-        or
-        change1h <=
-        BTC_1H_CRASH_PCT
+        btc15 > 0.7
+        and btc1h > 1.0
     ):
 
-        regime = "CRASH"
+        return (
+            "BULL",
+            btc15,
+            btc1h
+        )
 
-    elif score >= 65:
-
-        regime = "BULL"
-
-    elif score <= 35:
-
-        regime = "WEAK"
-
-    else:
-
-        regime = "NEUTRAL"
-
-    print(
-        f"[BTC] BTC "
-        f"{regime} / Score "
-        f"{score}"
+    return (
+        "NEUTRAL",
+        btc15,
+        btc1h
     )
-
-    if regime == "CRASH":
-
-        print(
-            "🔴 BTC 급락"
-        )
-
-    elif regime == "WEAK":
-
-        print(
-            "🟠 BTC 약세"
-        )
-
-    elif regime == "BULL":
-
-        print(
-            "🟢 BTC 강세"
-        )
-
-    else:
-
-        print(
-            "🟡 BTC 중립"
-        )
-
-    return {
-
-        "regime":
-            regime,
-
-        "score":
-            score,
-
-        "change15":
-            change15,
-
-        "change1h":
-            change1h
-    }
 
 
 # ============================================================
-# FAST SCORE
+# FAST CANDIDATES
 # ============================================================
 
-def fast_score(
-    ticker
-):
+def fast_candidate_scan():
 
-    change = (
-        safe_float(
+    markets = get_markets()
+
+    if not markets:
+        return []
+
+    tickers = get_tickers(
+        markets
+    )
+
+    candidates = []
+
+    for ticker in tickers:
+
+        market = ticker.get(
+            "market"
+        )
+
+        trade_value = float(
             ticker.get(
-                "signed_change_rate"
+                "acc_trade_price_24h",
+                0
             )
         )
-        * 100
-    )
 
-    trade_value = safe_float(
-        ticker.get(
-            "acc_trade_price_24h"
+        price = float(
+            ticker.get(
+                "trade_price",
+                0
+            )
         )
+
+        change = float(
+            ticker.get(
+                "signed_change_rate",
+                0
+            )
+        ) * 100
+
+        if price <= 0:
+            continue
+
+        if trade_value < MIN_FINAL_24H_TRADE_VALUE:
+            continue
+
+        candidates.append(
+            {
+                "market": market,
+                "price": price,
+                "trade_value": trade_value,
+                "change": change
+            }
+        )
+
+    candidates.sort(
+        key=lambda x: x["trade_value"],
+        reverse=True
     )
 
-    score = 0
-
-    if change >= 15:
-
-        score += 40
-
-    elif change >= 10:
-
-        score += 35
-
-    elif change >= 7:
-
-        score += 30
-
-    elif change >= 5:
-
-        score += 25
-
-    elif change >= 3:
-
-        score += 18
-
-    elif change >= 1:
-
-        score += 10
-
-    if trade_value >= 50_000_000_000:
-
-        score += 40
-
-    elif trade_value >= 20_000_000_000:
-
-        score += 35
-
-    elif trade_value >= 10_000_000_000:
-
-        score += 30
-
-    elif trade_value >= 5_000_000_000:
-
-        score += 25
-
-    elif trade_value >= 1_000_000_000:
-
-        score += 15
-
-    return clamp_score(
-        score
-    )
+    return candidates
 
 
 # ============================================================
 # DEEP ANALYSIS
 # ============================================================
 
-def analyze_coin(
+def analyze_market(
     market,
     ticker,
-    btc
+    btc_regime
 ):
 
     df1d = get_candles(
@@ -1465,19 +852,18 @@ def analyze_coin(
     df1h = get_candles(
         market,
         60,
-        150
+        120
     )
 
     df15 = get_candles(
         market,
         15,
-        200
+        120
     )
 
     if any(
-        df is None
-        or len(df) < 60
-        for df in [
+        x.empty
+        for x in [
             df1d,
             df4h,
             df1h,
@@ -1487,999 +873,388 @@ def analyze_coin(
 
         return None
 
-    # --------------------------------------------------------
-    # INDICATORS
-    # --------------------------------------------------------
+    if min(
+        len(df1d),
+        len(df4h),
+        len(df1h),
+        len(df15)
+    ) < 60:
 
-    for df in [
-        df1d,
-        df4h,
-        df1h,
-        df15
-    ]:
-
-        df["ema20"] = ema(
-            df["close"],
-            20
-        )
-
-        df["ema50"] = ema(
-            df["close"],
-            50
-        )
-
-    df15["rsi"] = rsi(
-        df15["close"],
-        14
-    )
-
-    df15["atr"] = atr(
-        df15,
-        14
-    )
-
-    # --------------------------------------------------------
-    # LAST COMPLETED CANDLES
-    # --------------------------------------------------------
-
-    i1d = -2
-    i4h = -2
-    i1h = -2
-    i15 = -2
-
-    price = safe_float(
-        ticker.get(
-            "trade_price"
-        )
-    )
-
-    if price <= 0:
-
-        price = safe_float(
-            df15["close"].iloc[i15]
-        )
+        return None
 
     # --------------------------------------------------------
     # TREND
     # --------------------------------------------------------
 
-    d1_close = (
-        df1d["close"].iloc[i1d]
+    trend1d = timeframe_trend(
+        df1d
     )
 
-    d1_ema20 = (
-        df1d["ema20"].iloc[i1d]
+    trend4h = timeframe_trend(
+        df4h
     )
 
-    d1_ema50 = (
-        df1d["ema50"].iloc[i1d]
+    trend1h = timeframe_trend(
+        df1h
     )
 
-    h4_close = (
-        df4h["close"].iloc[i4h]
+    trend15 = timeframe_trend(
+        df15
     )
 
-    h4_ema20 = (
-        df4h["ema20"].iloc[i4h]
-    )
-
-    h4_ema50 = (
-        df4h["ema50"].iloc[i4h]
-    )
-
-    h1_close = (
-        df1h["close"].iloc[i1h]
-    )
-
-    h1_ema20 = (
-        df1h["ema20"].iloc[i1h]
-    )
-
-    h1_ema50 = (
-        df1h["ema50"].iloc[i1h]
-    )
-
-    m15_close = (
-        df15["close"].iloc[i15]
-    )
-
-    m15_ema20 = (
-        df15["ema20"].iloc[i15]
-    )
-
-    d1_ema_pass = (
-        d1_close >
-        d1_ema20
-    )
-
-    d1_align = (
-        d1_ema20 >
-        d1_ema50
-    )
-
-    h4_ema_pass = (
-        h4_close >
-        h4_ema20
-    )
-
-    h4_align = (
-        h4_ema20 >
-        h4_ema50
-    )
-
-    h1_ema_pass = (
-        h1_close >
-        h1_ema20
-    )
-
-    h1_align = (
-        h1_ema20 >
-        h1_ema50
-    )
-
-    m15_ema_pass = (
-        m15_close >
-        m15_ema20
-    )
+    if trend15 != "PASS":
+        return None
 
     # --------------------------------------------------------
-    # MOMENTUM
+    # PRICE
     # --------------------------------------------------------
 
-    h1_momentum = pct_change(
-        df1h["close"].iloc[-9],
-        df1h["close"].iloc[i1h]
+    price = float(
+        df15["close"].iloc[-1]
     )
 
-    m15_momentum = pct_change(
-        df15["close"].iloc[-9],
-        df15["close"].iloc[i15]
+    ema20 = float(
+        ema(
+            df15["close"],
+            20
+        ).iloc[-1]
+    )
+
+    ema50 = float(
+        ema(
+            df15["close"],
+            50
+        ).iloc[-1]
+    )
+
+    atr15 = float(
+        atr(
+            df15,
+            14
+        ).iloc[-1]
+    )
+
+    if atr15 <= 0:
+        return None
+
+    # --------------------------------------------------------
+    # RSI
+    # --------------------------------------------------------
+
+    rsi_value = float(
+        rsi(
+            df15["close"],
+            14
+        ).iloc[-1]
     )
 
     # --------------------------------------------------------
     # VOLUME
     # --------------------------------------------------------
 
-    recent_volume = safe_float(
-        df15["volume"].iloc[i15]
+    avg_volume = float(
+        df15["volume"]
+        .iloc[-21:-1]
+        .mean()
     )
 
-    volume_base = safe_float(
-        df15["volume"].iloc[-22:-2].mean()
+    current_volume = float(
+        df15["volume"].iloc[-1]
     )
 
-    if volume_base > 0:
+    if avg_volume <= 0:
+        return None
 
-        volume_ratio = (
-            recent_volume /
-            volume_base *
-            100
-        )
-
-    else:
-
-        volume_ratio = 0
+    volume_ratio = (
+        current_volume
+        /
+        avg_volume
+    ) * 100
 
     # --------------------------------------------------------
     # CANDLE
     # --------------------------------------------------------
 
-    candle = df15.iloc[i15]
+    candle = df15.iloc[-1]
 
     candle_range = (
-        candle["high"] -
-        candle["low"]
+        float(candle["high"])
+        -
+        float(candle["low"])
     )
 
-    if candle_range > 0:
+    if candle_range <= 0:
+        return None
 
-        body_ratio = (
-            abs(
-                candle["close"] -
-                candle["open"]
-            )
-            /
-            candle_range
-        )
+    body = abs(
+        float(candle["close"])
+        -
+        float(candle["open"])
+    )
 
-        close_position = (
-            candle["close"] -
-            candle["low"]
-        ) / candle_range
+    body_ratio = (
+        body /
+        candle_range
+    )
 
-    else:
-
-        body_ratio = 0
-        close_position = 0
+    close_position = (
+        float(candle["close"])
+        -
+        float(candle["low"])
+    ) / candle_range
 
     candle_pass = (
-        candle["close"]
-        >
-        candle["open"]
-        and
-        body_ratio
-        >=
-        MIN_BODY_RATIO
-        and
-        close_position
-        >=
-        MIN_CLOSE_POSITION
+        body_ratio >= MIN_BODY_RATIO
+        and close_position >= MIN_CLOSE_POSITION
+        and candle["close"] > candle["open"]
     )
 
     # --------------------------------------------------------
     # BREAKOUT
     # --------------------------------------------------------
 
-    previous_high = safe_float(
-        df15["high"].iloc[-22:-2].max()
+    previous_high = float(
+        df15["high"]
+        .iloc[-21:-1]
+        .max()
     )
 
     breakout_pass = (
-        candle["close"]
-        >
-        previous_high
+        price > previous_high
     )
 
     # --------------------------------------------------------
-    # RSI
+    # 1H MOMENTUM
     # --------------------------------------------------------
 
-    current_rsi = safe_float(
-        df15["rsi"].iloc[i15],
-        50
-    )
-
-    # --------------------------------------------------------
-    # ATR
-    # --------------------------------------------------------
-
-    current_atr = safe_float(
-        df15["atr"].iloc[i15]
-    )
-
-    if current_atr <= 0:
-
-        current_atr = (
-            price * 0.03
-        )
-
-    # --------------------------------------------------------
-    # TARGETS
-    # --------------------------------------------------------
-
-    stop = (
-        price -
-        current_atr * 1.5
-    )
-
-    risk = (
-        price -
-        stop
-    )
-
-    stop_loss_pct = (
-        risk /
-        price *
-        100
-    )
-
-    tp1 = (
-        price +
-        risk * 1.5
-    )
-
-    tp2 = (
-        price +
-        risk * 2.0
-    )
-
-    tp3 = (
-        price +
-        risk * 3.0
-    )
-
-    tp1_distance_pct = (
-        (tp1 / price - 1)
-        * 100
-    )
+    change_1h = (
+        df1h["close"].iloc[-1]
+        /
+        df1h["close"].iloc[-2]
+        - 1
+    ) * 100
 
     # --------------------------------------------------------
     # EMA DISTANCE
     # --------------------------------------------------------
 
-    ema_distance_pct = (
-        abs(
-            price -
-            m15_ema20
-        )
+    ema_distance = (
+        abs(price - ema20)
         /
-        price
-        * 100
+        ema20
+    ) * 100
+
+    if ema_distance > MAX_ENTRY_DISTANCE_FROM_EMA20:
+        return None
+
+    # --------------------------------------------------------
+    # RISK / TARGET
+    # --------------------------------------------------------
+
+    support = float(
+        df15["low"]
+        .iloc[-15:-1]
+        .min()
     )
 
-    # ========================================================
+    stop = support - (
+        atr15 * 0.25
+    )
+
+    if stop >= price:
+        return None
+
+    stop_loss_pct = (
+        (price - stop)
+        /
+        price
+    ) * 100
+
+    if (
+        stop_loss_pct < MIN_STOP_LOSS_PCT
+        or stop_loss_pct > MAX_STOP_LOSS_PCT
+    ):
+
+        return None
+
+    risk = price - stop
+
+    tp1 = price + risk * 1.5
+    tp2 = price + risk * 2.0
+    tp3 = price + risk * 3.0
+
+    tp1_distance = (
+        (tp1 - price)
+        /
+        price
+    ) * 100
+
+    if tp1_distance > MAX_TP1_DISTANCE_PCT:
+        return None
+
+    # --------------------------------------------------------
     # SCORE
-    # ========================================================
+    # --------------------------------------------------------
 
     score = 0
 
-    details = []
-
-    # --------------------------------------------------------
-    # 1D = 20
-    # --------------------------------------------------------
-
-    if d1_ema_pass:
-
-        score += 7
-
-        details.append(
-            "1D EMA20 PASS"
-        )
-
-    else:
-
-        details.append(
-            "1D EMA20 FAIL"
-        )
-
-    if d1_align:
-
-        score += 7
-
-        details.append(
-            "1D 정배열 PASS"
-        )
-
-    else:
-
-        details.append(
-            "1D 정배열 FAIL"
-        )
-
-    d1_rising = (
-        df1d["ema20"].iloc[i1d]
-        >
-        df1d["ema20"].iloc[i1d - 3]
-    )
-
-    if d1_rising:
-
-        score += 6
-
-        details.append(
-            "1D 상승 PASS"
-        )
-
-    else:
-
-        details.append(
-            "1D 상승 FAIL"
-        )
-
-    # --------------------------------------------------------
-    # 4H = 20
-    # --------------------------------------------------------
-
-    if h4_ema_pass:
-
-        score += 7
-
-        details.append(
-            "4H EMA20 PASS"
-        )
-
-    else:
-
-        details.append(
-            "4H EMA20 FAIL"
-        )
-
-    if h4_align:
-
-        score += 7
-
-        details.append(
-            "4H 정배열 PASS"
-        )
-
-    else:
-
-        details.append(
-            "4H 정배열 FAIL"
-        )
-
-    h4_rising = (
-        df4h["ema20"].iloc[i4h]
-        >
-        df4h["ema20"].iloc[i4h - 3]
-    )
-
-    if h4_rising:
-
-        score += 6
-
-        details.append(
-            "4H 상승 PASS"
-        )
-
-    else:
-
-        details.append(
-            "4H 상승 FAIL"
-        )
-
-    # --------------------------------------------------------
-    # 1H = 15
-    # --------------------------------------------------------
-
-    if h1_ema_pass:
-
-        score += 5
-
-        details.append(
-            "1H EMA20 PASS"
-        )
-
-    else:
-
-        details.append(
-            "1H EMA20 FAIL"
-        )
-
-    if h1_align:
-
-        score += 5
-
-        details.append(
-            "1H 정배열 PASS"
-        )
-
-    else:
-
-        details.append(
-            "1H 정배열 FAIL"
-        )
-
-    if h1_momentum > 0:
-
-        score += 5
-
-        details.append(
-            f"1H 모멘텀 PASS "
-            f"{h1_momentum:+.2f}%"
-        )
-
-    else:
-
-        details.append(
-            f"1H 모멘텀 FAIL "
-            f"{h1_momentum:+.2f}%"
-        )
-
-    # --------------------------------------------------------
-    # 15M = 15
-    # --------------------------------------------------------
-
-    if m15_ema_pass:
-
-        score += 5
-
-        details.append(
-            "15M EMA20 PASS"
-        )
-
-    else:
-
-        details.append(
-            "15M EMA20 FAIL"
-        )
-
-    m15_ema_rising = (
-        df15["ema20"].iloc[i15]
-        >
-        df15["ema20"].iloc[i15 - 3]
-    )
-
-    if m15_ema_rising:
-
-        score += 5
-
-        details.append(
-            "15M EMA 상승 PASS"
-        )
-
-    else:
-
-        details.append(
-            "15M EMA 상승 FAIL"
-        )
-
-    if m15_momentum > 0:
-
-        score += 5
-
-        details.append(
-            f"15M 모멘텀 PASS "
-            f"{m15_momentum:+.2f}%"
-        )
-
-    else:
-
-        details.append(
-            f"15M 모멘텀 FAIL "
-            f"{m15_momentum:+.2f}%"
-        )
-
-    # --------------------------------------------------------
-    # VOLUME = 15
-    # --------------------------------------------------------
-
-    if volume_ratio >= STRONG_VOLUME_RATIO:
-
+    # 1D
+    if trend1d == "PASS":
+        score += 20
+
+    # 4H
+    if trend4h == "PASS":
+        score += 20
+
+    # 1H
+    if trend1h == "PASS":
         score += 15
 
-        details.append(
-            f"거래량 "
-            f"{volume_ratio:.0f}% "
-            f"(15/15)"
-        )
+    # 15M
+    if trend15 == "PASS":
+        score += 15
+
+    # volume
+    if volume_ratio >= STRONG_VOLUME_RATIO:
+        score += 15
 
     elif volume_ratio >= MIN_VOLUME_RATIO:
-
         score += 10
 
-        details.append(
-            f"거래량 "
-            f"{volume_ratio:.0f}% "
-            f"(10/15)"
-        )
-
-    else:
-
-        details.append(
-            f"거래량 "
-            f"{volume_ratio:.0f}% "
-            f"(0/15)"
-        )
-
-    # --------------------------------------------------------
-    # CANDLE = 10
-    # --------------------------------------------------------
-
+    # candle
     if candle_pass:
-
         score += 10
 
-        details.append(
-            "캔들 10/10"
-        )
-
-    else:
-
-        details.append(
-            "캔들 0/10"
-        )
-
-    # --------------------------------------------------------
-    # BREAKOUT = 10
-    # --------------------------------------------------------
-
+    # breakout
     if breakout_pass:
-
         score += 10
 
-        details.append(
-            "15M 돌파 PASS"
-        )
-
-    else:
-
-        details.append(
-            "15M 돌파 FAIL"
-        )
+    # risk
+    if (
+        MIN_STOP_LOSS_PCT
+        <= stop_loss_pct
+        <= MAX_STOP_LOSS_PCT
+    ):
+        score += 5
 
     # --------------------------------------------------------
-    # RSI
+    # PENALTIES
     # --------------------------------------------------------
 
-    if current_rsi >= 82:
-
+    if rsi_value >= 82:
         score -= 5
 
-        details.append(
-            f"RSI 과열 -5 "
-            f"({current_rsi:.1f})"
-        )
-
-    elif current_rsi >= 70:
-
-        details.append(
-            f"RSI 강세 "
-            f"({current_rsi:.1f})"
-        )
-
-    elif current_rsi < 50:
-
+    elif rsi_value < 50:
         score -= 2
 
-        details.append(
-            f"RSI 약세 -2 "
-            f"({current_rsi:.1f})"
-        )
+    df4h_change = (
+        df4h["close"].iloc[-1]
+        /
+        df4h["close"].iloc[-2]
+        - 1
+    ) * 100
 
-    else:
-
-        details.append(
-            f"RSI 중립 "
-            f"({current_rsi:.1f})"
-        )
-
-    # --------------------------------------------------------
-    # BTC
-    # --------------------------------------------------------
-
-    btc_regime = btc[
-        "regime"
-    ]
-
-    if btc_regime == "BULL":
-
-        score += 5
-
-        details.append(
-            "BTC 강세 +5"
-        )
-
-    elif btc_regime == "WEAK":
-
-        score -= 3
-
-        details.append(
-            "BTC 약세 -3"
-        )
-
-    elif btc_regime == "CRASH":
-
-        score -= 15
-
-        details.append(
-            "BTC 급락 -15"
-        )
-
-    else:
-
-        details.append(
-            "BTC 중립"
-        )
-
-    # --------------------------------------------------------
-    # 4H OVERHEAT
-    # --------------------------------------------------------
-
-    h4_change = pct_change(
-        df4h["close"].iloc[-10],
-        df4h["close"].iloc[i4h]
-    )
-
-    if h4_change > 18:
-
+    if df4h_change > 18:
         score -= 8
 
-        details.append(
-            f"4H 과열 -8 "
-            f"{h4_change:+.2f}%"
-        )
-
-    # --------------------------------------------------------
-    # EMA DISTANCE
-    # --------------------------------------------------------
-
-    if (
-        ema_distance_pct
-        >
-        MAX_ENTRY_DISTANCE_FROM_EMA20
-    ):
-
+    if ema_distance > 6:
         score -= 7
 
-        details.append(
-            f"EMA20 거리 과다 -7 "
-            f"{ema_distance_pct:.2f}%"
-        )
-
-    else:
-
-        details.append(
-            f"EMA20 거리 OK "
-            f"({ema_distance_pct:.2f}%)"
-        )
-
-    # --------------------------------------------------------
-    # TP1 DISTANCE
-    # --------------------------------------------------------
-
-    if (
-        tp1_distance_pct
-        >
-        MAX_TP1_DISTANCE_PCT
-    ):
-
+    if tp1_distance > 15:
         score -= 8
 
-        details.append(
-            f"TP1 거리 과다 -8 "
-            f"{tp1_distance_pct:.2f}%"
-        )
-
-    # --------------------------------------------------------
-    # RISK
-    # --------------------------------------------------------
-
-    if (
-        stop_loss_pct
-        >
-        MAX_STOP_LOSS_PCT
-    ):
-
-        details.append(
-            f"SL 과다 FAIL "
-            f"{stop_loss_pct:.2f}%"
-        )
-
-    elif (
-        stop_loss_pct
-        <
-        MIN_STOP_LOSS_PCT
-    ):
-
-        score -= 3
-
-        details.append(
-            f"SL 너무 좁음 -3 "
-            f"{stop_loss_pct:.2f}%"
-        )
-
-    else:
-
+    # BTC environment
+    if btc_regime == "BULL":
         score += 5
 
-        details.append(
-            f"Risk PASS SL "
-            f"{stop_loss_pct:.2f}%"
+    elif btc_regime == "WEAK":
+        score -= 3
+
+    elif btc_regime == "CRASH":
+        score -= 15
+
+    score = max(
+        0,
+        min(
+            100,
+            int(score)
         )
-
-    # ========================================================
-    # FINAL SCORE
-    # ========================================================
-
-    raw_score = score
-
-    score = clamp_score(
-        score
     )
 
-    # ========================================================
-    # FINAL SIGNAL CONDITIONS
-    # ========================================================
-
-    final_pass = True
-
-    if (
-        stop_loss_pct
-        >
-        MAX_STOP_LOSS_PCT
-    ):
-
-        final_pass = False
-
-    if (
-        tp1_distance_pct
-        >
-        MAX_TP1_DISTANCE_PCT
-    ):
-
-        final_pass = False
-
-    if risk <= 0:
-
-        final_pass = False
-
-    if tp1 <= price:
-
-        final_pass = False
-
-    if tp2 <= tp1:
-
-        final_pass = False
-
-    if tp3 <= tp2:
-
-        final_pass = False
-
     # --------------------------------------------------------
-    # BTC CRASH
+    # FINAL FILTER
     # --------------------------------------------------------
 
     if btc_regime == "CRASH":
 
         if score < STRONG_SCORE:
-
-            final_pass = False
-
-    # --------------------------------------------------------
-    # BTC WEAK
-    # --------------------------------------------------------
+            return None
 
     elif btc_regime == "WEAK":
 
         if score < WEAK_BTC_SCORE:
+            return None
 
-            final_pass = False
-
-    # --------------------------------------------------------
-    # NORMAL
-    # --------------------------------------------------------
+        if volume_ratio < STRONG_VOLUME_RATIO:
+            return None
 
     else:
 
         if score < SIGNAL_SCORE:
+            return None
 
-            final_pass = False
+    if not candle_pass:
+        return None
+
+    if volume_ratio < MIN_VOLUME_RATIO:
+        return None
+
+    if not breakout_pass:
+        return None
+
+    # --------------------------------------------------------
+    # SIGNAL CANDLE
+    # --------------------------------------------------------
+
+    signal_candle = str(
+        df15["candle_date_time_kst"].iloc[-1]
+    )
 
     return {
+        "market": market,
 
-        "market":
-            market,
+        "price": price,
+        "entry": price,
 
-        "price":
-            price,
+        "stop": stop,
+        "tp1": tp1,
+        "tp2": tp2,
+        "tp3": tp3,
 
-        "score":
-            score,
+        "score": score,
 
-        "raw_score":
-            raw_score,
+        "rsi": rsi_value,
+        "volume_ratio": volume_ratio,
 
-        "entry":
-            price,
+        "stop_loss_pct": stop_loss_pct,
 
-        "stop":
-            stop,
+        "btc_regime": btc_regime,
 
-        "tp1":
-            tp1,
+        "signal_candle": signal_candle,
 
-        "tp2":
-            tp2,
+        "change_1h": change_1h,
 
-        "tp3":
-            tp3,
+        "ema_distance": ema_distance,
 
-        "stop_loss_pct":
-            stop_loss_pct,
-
-        "tp1_distance_pct":
-            tp1_distance_pct,
-
-        "ema_distance_pct":
-            ema_distance_pct,
-
-        "rsi":
-            current_rsi,
-
-        "volume_ratio":
-            volume_ratio,
-
-        "h1_momentum":
-            h1_momentum,
-
-        "m15_momentum":
-            m15_momentum,
-
-        "btc_regime":
-            btc_regime,
-
-        "signal_candle":
-            str(
-                df15["time"].iloc[i15]
-            ),
-
-        "final_pass":
-            final_pass,
-
-        "details":
-            details
+        "trend1d": trend1d,
+        "trend4h": trend4h,
+        "trend1h": trend1h,
+        "trend15": trend15
     }
 
 
 # ============================================================
-# SIGNAL DUPLICATE PROTECTION
-# ============================================================
-
-def signal_already_sent(
-    state,
-    signal_id
-):
-
-    if not signal_id:
-
-        return True
-
-    sent = state.get(
-        "sent_signal_ids",
-        []
-    )
-
-    if signal_id in sent:
-
-        return True
-
-    for pos in state.get(
-        "positions",
-        {}
-    ).values():
-
-        if (
-            pos.get(
-                "signal_id"
-            )
-            ==
-            signal_id
-        ):
-
-            return True
-
-    for item in state.get(
-        "history",
-        []
-    ):
-
-        if (
-            item.get(
-                "signal_id"
-            )
-            ==
-            signal_id
-        ):
-
-            return True
-
-    return False
-
-
-def remember_signal(
-    state,
-    signal_id
-):
-
-    if not signal_id:
-
-        return
-
-    sent = state.setdefault(
-        "sent_signal_ids",
-        []
-    )
-
-    if (
-        signal_id
-        not in sent
-    ):
-
-        sent.append(
-            signal_id
-        )
-
-    if len(sent) > 1000:
-
-        state[
-            "sent_signal_ids"
-        ] = sent[-1000:]
-
-
-# ============================================================
-# NEW SIGNAL COOLDOWN
+# COOLDOWN
 # ============================================================
 
 def can_create_new_signal(
@@ -2488,90 +1263,57 @@ def can_create_new_signal(
     price
 ):
 
-    positions = state.get(
-        "positions",
-        {}
-    )
+    now = now_kst()
 
-    if market in positions:
-
-        return False
-
-    cutoff = (
-        datetime.now(timezone.utc)
-        -
-        timedelta(
-            hours=
-            SIGNAL_COOLDOWN_HOURS
-        )
-    )
-
-    for item in state.get(
-        "history",
-        []
+    for item in reversed(
+        state.get("history", [])
     ):
 
-        if (
-            item.get(
-                "market"
-            )
-            != market
-        ):
-
+        if item.get("market") != market:
             continue
 
         created = item.get(
-            "created_at",
-            ""
+            "created_at"
         )
+
+        if not created:
+            continue
 
         try:
 
             dt = datetime.fromisoformat(
-                str(created).replace(
-                    "Z",
-                    "+00:00"
-                )
+                created
             )
 
             if dt.tzinfo is None:
-
                 dt = dt.replace(
-                    tzinfo=timezone.utc
+                    tzinfo=KST
                 )
 
-        except Exception:
+            age = (
+                now - dt
+            ).total_seconds() / 3600
 
-            continue
+            if age < SIGNAL_COOLDOWN_HOURS:
 
-        if dt >= cutoff:
-
-            old_price = safe_float(
-                item.get(
-                    "entry"
+                old_price = float(
+                    item.get(
+                        "entry",
+                        price
+                    )
                 )
-            )
 
-            if old_price <= 0:
-
-                return False
-
-            distance = (
-                abs(
-                    price /
+                distance = (
+                    abs(price - old_price)
+                    /
                     old_price
-                    - 1
-                )
-                * 100
-            )
+                ) * 100
 
-            if (
-                distance
-                <
-                MIN_NEW_SIGNAL_PRICE_DISTANCE
-            ):
+                if distance < MIN_NEW_SIGNAL_PRICE_DISTANCE:
+                    return False
 
-                return False
+        except:
+            continue
 
     return True
 
@@ -2585,9 +1327,7 @@ def create_position(
     analysis
 ):
 
-    market = analysis[
-        "market"
-    ]
+    market = analysis["market"]
 
     signal_candle = analysis[
         "signal_candle"
@@ -2598,40 +1338,38 @@ def create_position(
         f"{signal_candle}"
     )
 
-    # --------------------------------------------------------
-    # Reload state immediately
-    # --------------------------------------------------------
-
+    # 최신 상태 재로드
     latest = load_state()
 
     migrate_positions(
         latest
     )
 
+    # 이미 보낸 시그널인지 확인
     if signal_already_sent(
         latest,
         signal_id
     ):
 
         print(
-            f"[DUPLICATE BLOCK] "
-            f"{signal_id}"
+            f"[중복 차단] {signal_id}"
         )
 
         return False
 
+    # 이미 포지션 존재
     if market in latest.get(
         "positions",
         {}
     ):
 
         print(
-            f"[POSITION EXISTS] "
-            f"{market}"
+            f"[기존 포지션] {market}"
         )
 
         return False
 
+    # 쿨다운
     if not can_create_new_signal(
         latest,
         market,
@@ -2639,49 +1377,32 @@ def create_position(
     ):
 
         print(
-            f"[COOLDOWN BLOCK] "
-            f"{market}"
+            f"[쿨다운 차단] {market}"
         )
 
         return False
 
     position = {
 
-        "market":
-            market,
+        "market": market,
 
-        "entry":
-            analysis["entry"],
+        "entry": analysis["entry"],
+        "stop": analysis["stop"],
 
-        "stop":
-            analysis["stop"],
+        "tp1": analysis["tp1"],
+        "tp2": analysis["tp2"],
+        "tp3": analysis["tp3"],
 
-        "tp1":
-            analysis["tp1"],
+        "stage": "ENTRY",
 
-        "tp2":
-            analysis["tp2"],
+        "score": analysis["score"],
 
-        "tp3":
-            analysis["tp3"],
+        "signal_id": signal_id,
+        "signal_candle": signal_candle,
 
-        "stage":
-            "ENTRY",
+        "direction": "LONG",
 
-        "score":
-            analysis["score"],
-
-        "signal_id":
-            signal_id,
-
-        "signal_candle":
-            signal_candle,
-
-        "direction":
-            "LONG",
-
-        "created_at":
-            now_kst().isoformat()
+        "created_at": now_kst().isoformat()
     }
 
     latest[
@@ -2693,45 +1414,56 @@ def create_position(
         signal_id
     )
 
-    # SAVE BEFORE TELEGRAM
+    history_item = {
+        "market": market,
+        "entry": analysis["entry"],
+        "stop": analysis["stop"],
+        "tp1": analysis["tp1"],
+        "tp2": analysis["tp2"],
+        "tp3": analysis["tp3"],
+        "score": analysis["score"],
+        "signal_id": signal_id,
+        "created_at": now_kst().isoformat()
+    }
+
+    latest.setdefault(
+        "history",
+        []
+    ).append(
+        history_item
+    )
+
+    latest["history"] = latest[
+        "history"
+    ][-1000:]
+
+    # Telegram 전에 저장
     save_state(
         latest
     )
 
+    # ========================================================
+    # 한국어 알림
+    # ========================================================
+
     message = (
-        "🟢 <b>UPBIT LONG SIGNAL</b>\n"
+        "🟢 <b>롱 시그널 발생</b>\n"
         "\n"
-        f"<b>{market}</b>\n"
-        f"Score: <b>"
-        f"{analysis['score']}/100"
-        f"</b>\n"
-        f"BTC: "
-        f"{analysis['btc_regime']}\n"
+        f"종목: <b>{market}</b>\n"
+        f"점수: <b>{analysis['score']}/100</b>\n"
+        f"BTC 상태: {analysis['btc_regime']}\n"
         "\n"
-        f"ENTRY: <b>"
-        f"{fmt_price(analysis['entry'])}"
-        f"</b>\n"
-        f"SL: <b>"
-        f"{fmt_price(analysis['stop'])}"
-        f"</b>\n"
-        f"TP1: <b>"
-        f"{fmt_price(analysis['tp1'])}"
-        f"</b>\n"
-        f"TP2: <b>"
-        f"{fmt_price(analysis['tp2'])}"
-        f"</b>\n"
-        f"TP3: <b>"
-        f"{fmt_price(analysis['tp3'])}"
-        f"</b>\n"
+        f"진입가: <b>{fmt_price(analysis['entry'])}</b>\n"
+        f"손절가: <b>{fmt_price(analysis['stop'])}</b>\n"
+        f"익절1: <b>{fmt_price(analysis['tp1'])}</b>\n"
+        f"익절2: <b>{fmt_price(analysis['tp2'])}</b>\n"
+        f"익절3: <b>{fmt_price(analysis['tp3'])}</b>\n"
         "\n"
-        f"SL Risk: "
-        f"{analysis['stop_loss_pct']:.2f}%\n"
-        f"RSI: "
-        f"{analysis['rsi']:.1f}\n"
-        f"Volume: "
-        f"{analysis['volume_ratio']:.0f}%\n"
+        f"손절폭: {analysis['stop_loss_pct']:.2f}%\n"
+        f"RSI: {analysis['rsi']:.1f}\n"
+        f"거래량: {analysis['volume_ratio']:.0f}%\n"
         "\n"
-        "15M candle confirmed"
+        "15분봉 확정 시그널"
     )
 
     sent = send_telegram(
@@ -2741,118 +1473,25 @@ def create_position(
     if sent:
 
         print(
-            f"[NEW SIGNAL] "
+            f"[신규 롱 시그널] "
             f"{market} | "
-            f"Score "
-            f"{analysis['score']}"
+            f"점수 {analysis['score']}"
         )
 
     return True
 
 
 # ============================================================
-# HISTORY
+# POSITION TRACKING
 # ============================================================
 
-def add_history_result(
-    state,
-    pos,
-    result,
-    exit_price,
-    pnl_pct
-):
+def track_positions():
 
-    history = state.setdefault(
-        "history",
-        []
+    state = load_state()
+
+    migrate_positions(
+        state
     )
-
-    signal_id = pos.get(
-        "signal_id",
-        ""
-    )
-
-    # Update existing record
-    for item in history:
-
-        if (
-            signal_id
-            and
-            item.get(
-                "signal_id"
-            )
-            ==
-            signal_id
-        ):
-
-            item.update({
-
-                "result":
-                    result,
-
-                "exit_price":
-                    exit_price,
-
-                "pnl_pct":
-                    pnl_pct,
-
-                "closed_at":
-                    now_kst().isoformat()
-            })
-
-            return
-
-    # New history record
-    history.append({
-
-        "market":
-            pos.get(
-                "market",
-                ""
-            ),
-
-        "signal_id":
-            signal_id,
-
-        "entry":
-            pos.get(
-                "entry",
-                0
-            ),
-
-        "exit_price":
-            exit_price,
-
-        "result":
-            result,
-
-        "pnl_pct":
-            pnl_pct,
-
-        "score":
-            pos.get(
-                "score",
-                0
-            ),
-
-        "created_at":
-            pos.get(
-                "created_at",
-                ""
-            ),
-
-        "closed_at":
-            now_kst().isoformat()
-    })
-
-
-# ============================================================
-# TRACK POSITIONS
-# ============================================================
-
-def track_positions(
-    state
-):
 
     positions = state.get(
         "positions",
@@ -2860,18 +1499,7 @@ def track_positions(
     )
 
     if not positions:
-
-        print(
-            "[TRACKING] "
-            "활성 포지션 없음"
-        )
-
         return
-
-    print(
-        f"[TRACKING] "
-        f"{len(positions)}개 포지션"
-    )
 
     changed = False
 
@@ -2879,305 +1507,208 @@ def track_positions(
         positions.keys()
     ):
 
-        try:
+        position = positions[
+            market
+        ]
 
-            # ------------------------------------------------
-            # Normalize current position
-            # ------------------------------------------------
+        df = get_candles(
+            market,
+            1,
+            3
+        )
 
-            normalized = normalize_position(
-                market,
-                positions[market]
+        if df.empty:
+            continue
+
+        current = float(
+            df["close"].iloc[-1]
+        )
+
+        entry = float(
+            position["entry"]
+        )
+
+        stop = float(
+            position["stop"]
+        )
+
+        tp1 = float(
+            position["tp1"]
+        )
+
+        tp2 = float(
+            position["tp2"]
+        )
+
+        tp3 = float(
+            position["tp3"]
+        )
+
+        stage = position.get(
+            "stage",
+            "ENTRY"
+        )
+
+        # ====================================================
+        # SL FIRST
+        # ====================================================
+
+        if current <= stop:
+
+            pnl_pct = (
+                (current - entry)
+                /
+                entry
+            ) * 100
+
+            send_telegram(
+                f"🔴 <b>손절 발생</b>\n"
+                f"\n"
+                f"종목: <b>{market}</b>\n"
+                f"진입가: {fmt_price(entry)}\n"
+                f"청산가: {fmt_price(current)}\n"
+                f"수익률: <b>{pnl_pct:+.2f}%</b>"
             )
 
-            if normalized is None:
+            state.setdefault(
+                "history",
+                []
+            ).append(
+                {
+                    "market": market,
+                    "result": "SL",
+                    "entry": entry,
+                    "exit": current,
+                    "pnl_pct": pnl_pct,
+                    "closed_at": now_kst().isoformat()
+                }
+            )
 
-                print(
-                    f"[TRACK WAIT] "
-                    f"{market}"
-                )
-
-                continue
-
-            positions[
+            del positions[
                 market
-            ] = normalized
+            ]
 
-            pos = normalized
+            changed = True
 
-            # ------------------------------------------------
-            # 1M candles
-            # ------------------------------------------------
+            continue
 
-            df1m = get_candles(
-                market,
-                1,
-                10
+        # ====================================================
+        # TP1
+        # ====================================================
+
+        if (
+            stage == "ENTRY"
+            and current >= tp1
+        ):
+
+            if MOVE_SL_TO_ENTRY_AFTER_TP1:
+
+                position[
+                    "stop"
+                ] = entry
+
+            position[
+                "stage"
+            ] = "TP1"
+
+            changed = True
+
+            send_telegram(
+                f"🟢 <b>익절 1단계 도달</b>\n"
+                f"\n"
+                f"종목: <b>{market}</b>\n"
+                f"진입가: {fmt_price(entry)}\n"
+                f"익절1: <b>{fmt_price(tp1)}</b>\n"
+                f"수익률: <b>"
+                f"{((tp1 / entry) - 1) * 100:+.2f}%"
+                f"</b>\n"
+                f"\n"
+                f"손절가 → 진입가"
             )
 
-            if (
-                df1m is None
-                or len(df1m) < 2
-            ):
+            continue
 
-                print(
-                    f"[TRACK] "
-                    f"{market}: "
-                    f"1M unavailable"
-                )
+        # ====================================================
+        # TP2
+        # ====================================================
 
-                continue
+        if (
+            stage == "TP1"
+            and current >= tp2
+        ):
 
-            candle = df1m.iloc[-1]
+            if MOVE_SL_TO_TP1_AFTER_TP2:
 
-            high = safe_float(
-                candle["high"]
+                position[
+                    "stop"
+                ] = tp1
+
+            position[
+                "stage"
+            ] = "TP2"
+
+            changed = True
+
+            send_telegram(
+                f"🟢 <b>익절 2단계 도달</b>\n"
+                f"\n"
+                f"종목: <b>{market}</b>\n"
+                f"진입가: {fmt_price(entry)}\n"
+                f"익절2: <b>{fmt_price(tp2)}</b>\n"
+                f"수익률: <b>"
+                f"{((tp2 / entry) - 1) * 100:+.2f}%"
+                f"</b>\n"
+                f"\n"
+                f"손절가 → 익절1"
             )
 
-            low = safe_float(
-                candle["low"]
+            continue
+
+        # ====================================================
+        # TP3
+        # ====================================================
+
+        if (
+            stage == "TP2"
+            and current >= tp3
+        ):
+
+            pnl_pct = (
+                (tp3 - entry)
+                /
+                entry
+            ) * 100
+
+            send_telegram(
+                f"🔵 <b>최종 익절 도달</b>\n"
+                f"\n"
+                f"종목: <b>{market}</b>\n"
+                f"진입가: {fmt_price(entry)}\n"
+                f"최종 익절가: <b>{fmt_price(tp3)}</b>\n"
+                f"최종 수익률: <b>{pnl_pct:+.2f}%</b>"
             )
 
-            entry = safe_float(
-                pos["entry"]
+            state.setdefault(
+                "history",
+                []
+            ).append(
+                {
+                    "market": market,
+                    "result": "TP3",
+                    "entry": entry,
+                    "exit": tp3,
+                    "pnl_pct": pnl_pct,
+                    "closed_at": now_kst().isoformat()
+                }
             )
 
-            stop = safe_float(
-                pos["stop"]
-            )
+            del positions[
+                market
+            ]
 
-            tp1 = safe_float(
-                pos["tp1"]
-            )
+            changed = True
 
-            tp2 = safe_float(
-                pos["tp2"]
-            )
-
-            tp3 = safe_float(
-                pos["tp3"]
-            )
-
-            stage = pos.get(
-                "stage",
-                "ENTRY"
-            )
-
-            # ------------------------------------------------
-            # STOP FIRST
-            # ------------------------------------------------
-
-            if low <= stop:
-
-                pnl_pct = (
-                    (
-                        stop /
-                        entry
-                    )
-                    - 1
-                ) * 100
-
-                if stage == "ENTRY":
-
-                    result = (
-                        "STOP_LOSS"
-                    )
-
-                else:
-
-                    result = (
-                        "PROTECTED"
-                    )
-
-                add_history_result(
-                    state,
-                    pos,
-                    result,
-                    stop,
-                    pnl_pct
-                )
-
-                send_telegram(
-                    f"🔴 <b>{market} "
-                    f"{result}</b>\n"
-                    f"Entry: "
-                    f"{fmt_price(entry)}\n"
-                    f"Exit: "
-                    f"{fmt_price(stop)}\n"
-                    f"PnL: "
-                    f"{pnl_pct:+.2f}%"
-                )
-
-                del positions[
-                    market
-                ]
-
-                changed = True
-
-                print(
-                    f"[CLOSED] "
-                    f"{market} | "
-                    f"{result} | "
-                    f"{pnl_pct:+.2f}%"
-                )
-
-                continue
-
-            # ------------------------------------------------
-            # TP1
-            # ------------------------------------------------
-
-            if (
-                stage == "ENTRY"
-                and
-                high >= tp1
-            ):
-
-                pos["stage"] = "TP1"
-
-                if (
-                    MOVE_SL_TO_ENTRY_AFTER_TP1
-                ):
-
-                    pos["stop"] = entry
-
-                add_history_result(
-                    state,
-                    pos,
-                    "TP1",
-                    tp1,
-                    (
-                        tp1 /
-                        entry
-                        - 1
-                    ) * 100
-                )
-
-                send_telegram(
-                    f"🟢 <b>{market} "
-                    f"TP1 HIT</b>\n"
-                    f"TP1: "
-                    f"{fmt_price(tp1)}\n"
-                    f"PnL: "
-                    f"{(tp1 / entry - 1) * 100:+.2f}%\n"
-                    f"SL → ENTRY"
-                )
-
-                changed = True
-
-                print(
-                    f"[TP1] "
-                    f"{market}"
-                )
-
-                continue
-
-            # ------------------------------------------------
-            # TP2
-            # ------------------------------------------------
-
-            if (
-                stage == "TP1"
-                and
-                high >= tp2
-            ):
-
-                pos["stage"] = "TP2"
-
-                if (
-                    MOVE_SL_TO_TP1_AFTER_TP2
-                ):
-
-                    pos["stop"] = tp1
-
-                add_history_result(
-                    state,
-                    pos,
-                    "TP2",
-                    tp2,
-                    (
-                        tp2 /
-                        entry
-                        - 1
-                    ) * 100
-                )
-
-                send_telegram(
-                    f"🟢 <b>{market} "
-                    f"TP2 HIT</b>\n"
-                    f"TP2: "
-                    f"{fmt_price(tp2)}\n"
-                    f"PnL: "
-                    f"{(tp2 / entry - 1) * 100:+.2f}%\n"
-                    f"SL → TP1"
-                )
-
-                changed = True
-
-                print(
-                    f"[TP2] "
-                    f"{market}"
-                )
-
-                continue
-
-            # ------------------------------------------------
-            # TP3
-            # ------------------------------------------------
-
-            if (
-                stage == "TP2"
-                and
-                high >= tp3
-            ):
-
-                pnl_pct = (
-                    (
-                        tp3 /
-                        entry
-                    )
-                    - 1
-                ) * 100
-
-                add_history_result(
-                    state,
-                    pos,
-                    "TP3",
-                    tp3,
-                    pnl_pct
-                )
-
-                send_telegram(
-                    f"🔵 <b>{market} "
-                    f"TP3 HIT</b>\n"
-                    f"Entry: "
-                    f"{fmt_price(entry)}\n"
-                    f"TP3: "
-                    f"{fmt_price(tp3)}\n"
-                    f"PnL: "
-                    f"{pnl_pct:+.2f}%"
-                )
-
-                del positions[
-                    market
-                ]
-
-                changed = True
-
-                print(
-                    f"[TP3] "
-                    f"{market} | "
-                    f"{pnl_pct:+.2f}%"
-                )
-
-                continue
-
-        except Exception as e:
-
-            print(
-                f"[TRACK ERROR] "
-                f"{market}: {e}"
-            )
+            continue
 
     if changed:
 
@@ -3187,152 +1718,94 @@ def track_positions(
 
 
 # ============================================================
-# MARKET SCAN
+# MAIN SCANNER
 # ============================================================
 
-def scan_market(
-    state,
-    btc
-):
+def run_scan():
+
+    print("=" * 50)
+    print("UPBIT SMART SIGNAL BOT V5.1")
+    print("=" * 50)
 
     print(
-        "\n[SCAN] "
-        "업비트 전체 시장 신규 신호 탐색"
+        "시작 시간:",
+        now_kst().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
     )
 
-    markets = get_markets()
+    # --------------------------------------------------------
+    # 기존 포지션 먼저 추적
+    # --------------------------------------------------------
 
-    if not markets:
+    track_positions()
+
+    # --------------------------------------------------------
+    # BTC 상태
+    # --------------------------------------------------------
+
+    btc_regime, btc15, btc1h = (
+        get_btc_regime()
+    )
+
+    print(
+        f"BTC 상태: {btc_regime}"
+    )
+
+    print(
+        f"BTC 15M: {btc15:.2f}%"
+    )
+
+    print(
+        f"BTC 1H : {btc1h:.2f}%"
+    )
+
+    # --------------------------------------------------------
+    # CRASH
+    # --------------------------------------------------------
+
+    if btc_regime == "CRASH":
 
         print(
-            "[SCAN ERROR] "
-            "KRW market unavailable"
+            "BTC 급락 상태 → 신규 진입 최소화"
         )
 
+    # --------------------------------------------------------
+    # FAST SCAN
+    # --------------------------------------------------------
+
+    candidates = fast_candidate_scan()
+
+    print(
+        f"KRW 마켓 후보: {len(candidates)}"
+    )
+
+    if not candidates:
         return
 
-    print(
-        f"[MARKET] "
-        f"전체 KRW 마켓 "
-        f"{len(markets)}개 확인"
-    )
-
-    tickers = get_tickers(
-        markets
-    )
-
-    if not tickers:
-
-        print(
-            "[SCAN ERROR] "
-            "ticker unavailable"
-        )
-
-        return
-
-    candidates = []
-
-    for ticker in tickers:
-
-        market = ticker.get(
-            "market"
-        )
-
-        if not market:
-
-            continue
-
-        trade_value = safe_float(
-            ticker.get(
-                "acc_trade_price_24h"
-            )
-        )
-
-        if (
-            trade_value
-            <
-            MIN_FINAL_24H_TRADE_VALUE
-        ):
-
-            continue
-
-        change = (
-            safe_float(
-                ticker.get(
-                    "signed_change_rate"
-                )
-            )
-            * 100
-        )
-
-        score = fast_score(
-            ticker
-        )
-
-        candidates.append({
-
-            "market":
-                market,
-
-            "ticker":
-                ticker,
-
-            "trade_value":
-                trade_value,
-
-            "change":
-                change,
-
-            "score":
-                score
-        })
-
-    candidates.sort(
-        key=lambda x: (
-            x["score"],
-            x["trade_value"]
-        ),
-        reverse=True
-    )
+    # 거래대금 상위
+    candidates = candidates[
+        :MAX_DEEP_SCAN
+    ]
 
     print(
-        f"[MARKET] "
-        f"1차 후보 "
-        f"{len(candidates)}개"
+        f"정밀 분석: {len(candidates)}개"
     )
 
-    print(
-        "\n[TOP CANDIDATES]"
+    state = load_state()
+
+    migrate_positions(
+        state
     )
+
+    # --------------------------------------------------------
+    # DEEP SCAN
+    # --------------------------------------------------------
+
+    signals = []
 
     for i, item in enumerate(
-        candidates[:10],
-        start=1
-    ):
-
-        print(
-            f"{i:02d}. "
-            f"{item['market']} | "
-            f"24H "
-            f"{item['change']:+.2f}% | "
-            f"Score "
-            f"{item['score']} | "
-            f"{item['trade_value'] / 100000000:.1f}억"
-        )
-
-    deep_candidates = (
-        candidates[:MAX_DEEP_SCAN]
-    )
-
-    print(
-        f"[DEEP SCAN] "
-        f"{len(deep_candidates)}개 정밀분석"
-    )
-
-    signals_found = 0
-
-    for index, item in enumerate(
-        deep_candidates,
+        candidates,
         start=1
     ):
 
@@ -3341,275 +1814,105 @@ def scan_market(
         ]
 
         print(
-            f"\n[{index}/"
-            f"{len(deep_candidates)}] "
-            f"{market} | "
-            f"24H "
-            f"{item['change']:+.2f}% "
-            f"| FAST "
-            f"{item['score']}"
+            f"[{i}/{len(candidates)}] "
+            f"{market}",
+            end=" "
         )
-
-        if market in state.get(
-            "positions",
-            {}
-        ):
-
-            print(
-                "   → 이미 활성 포지션"
-            )
-
-            continue
 
         try:
 
-            analysis = analyze_coin(
+            analysis = analyze_market(
                 market,
-                item["ticker"],
-                btc
+                item,
+                btc_regime
             )
 
             if analysis is None:
 
-                print(
-                    "   → 데이터 부족"
-                )
+                print("FAIL")
 
                 continue
 
             print(
-                f"   → SCORE "
-                f"{analysis['score']}"
+                f"PASS "
+                f"Score={analysis['score']}"
             )
 
-            for detail in analysis[
-                "details"
-            ]:
-
-                print(
-                    f"      {detail}"
-                )
-
-            if not analysis[
-                "final_pass"
-            ]:
-
-                print(
-                    "   → "
-                    "최종 SIGNAL FAIL"
-                )
-
-                continue
-
-            print(
-                "   → ★ "
-                "FINAL SIGNAL PASS"
-            )
-
-            created = create_position(
-                state,
+            signals.append(
                 analysis
             )
-
-            if created:
-
-                signals_found += 1
-
-                state.clear()
-
-                state.update(
-                    load_state()
-                )
 
         except Exception as e:
 
             print(
-                f"   → "
-                f"ANALYSIS ERROR: "
-                f"{e}"
+                "ERROR:",
+                e
             )
 
-    print(
-        f"\n[SCAN COMPLETE] "
-        f"신규 신호 "
-        f"{signals_found}개"
-    )
-
-
-# ============================================================
-# STATISTICS
-# ============================================================
-
-def print_statistics(
-    state
-):
-
-    history = state.get(
-        "history",
-        []
-    )
-
-    if not history:
-
-        return
-
-    result_counts = {}
-
-    for item in history:
-
-        result = item.get(
-            "result",
-            "UNKNOWN"
+        time.sleep(
+            0.05
         )
 
-        result_counts[
-            result
-        ] = (
-            result_counts.get(
-                result,
-                0
+    # --------------------------------------------------------
+    # SIGNAL SORT
+    # --------------------------------------------------------
+
+    signals.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    print("=" * 50)
+    print(
+        f"최종 시그널: {len(signals)}"
+    )
+
+    # --------------------------------------------------------
+    # CREATE
+    # --------------------------------------------------------
+
+    for analysis in signals:
+
+        try:
+
+            create_position(
+                state,
+                analysis
             )
-            + 1
-        )
 
-    print(
-        "\n=============================="
-    )
+        except Exception as e:
 
-    print(
-        "TRACKING STATISTICS"
-    )
+            print(
+                f"시그널 생성 오류 "
+                f"{analysis.get('market')}:",
+                e
+            )
 
-    print(
-        "=============================="
-    )
-
-    print(
-        f"History: "
-        f"{len(history)}"
-    )
-
-    for result, count in sorted(
-        result_counts.items()
-    ):
-
-        print(
-            f"{result}: "
-            f"{count}"
-        )
+    print("=" * 50)
+    print("스캔 완료")
 
 
 # ============================================================
-# MAIN
+# ENTRY POINT
 # ============================================================
-
-def main():
-
-    print(
-        "================================================================="
-    )
-
-    print(
-        "UPBIT SMART SIGNAL BOT V5"
-    )
-
-    print(
-        "================================================================="
-    )
-
-    print(
-        f"[TELEGRAM] "
-        f"TOKEN="
-        f"{'OK' if TELEGRAM_TOKEN else 'MISSING'} "
-        f"CHAT_ID="
-        f"{'OK' if TELEGRAM_CHAT_ID else 'MISSING'}"
-    )
-
-    # --------------------------------------------------------
-    # LOAD
-    # --------------------------------------------------------
-
-    state = load_state()
-
-    # --------------------------------------------------------
-    # MIGRATION
-    # --------------------------------------------------------
-
-    print(
-        "\n[STATE] "
-        "기존 포지션 확인"
-    )
-
-    migrate_positions(
-        state
-    )
-
-    save_state(
-        state
-    )
-
-    # --------------------------------------------------------
-    # STEP 1
-    # --------------------------------------------------------
-
-    print(
-        "\n[STEP 1] "
-        "기존 포지션 추적"
-    )
-
-    track_positions(
-        state
-    )
-
-    # --------------------------------------------------------
-    # RELOAD
-    # --------------------------------------------------------
-
-    state = load_state()
-
-    # --------------------------------------------------------
-    # STEP 2
-    # --------------------------------------------------------
-
-    print(
-        "\n[STEP 2] "
-        "업비트 전체 시장 신규 신호 탐색"
-    )
-
-    btc = get_btc_regime()
-
-    scan_market(
-        state,
-        btc
-    )
-
-    # --------------------------------------------------------
-    # FINAL STATE
-    # --------------------------------------------------------
-
-    state = load_state()
-
-    print_statistics(
-        state
-    )
-
-    save_state(
-        state
-    )
-
-    print(
-        "\n================================================================="
-    )
-
-    print(
-        "BOT FINISHED"
-    )
-
-    print(
-        "================================================================="
-    )
-
 
 if __name__ == "__main__":
 
-    main()
+    try:
+
+        run_scan()
+
+    except Exception as e:
+
+        print(
+            "전체 실행 오류:",
+            e
+        )
+
+        # 오류가 발생해도 Telegram으로 알려줌
+        send_telegram(
+            "⚠️ <b>봇 실행 오류</b>\n\n"
+            f"{str(e)[:1000]}"
+        )
+
+        raise
