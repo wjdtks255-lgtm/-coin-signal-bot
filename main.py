@@ -7,7 +7,7 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime, timezone
 
-VERSION = "6.0"
+VERSION = "6.1"
 
 BASE = "https://api.upbit.com/v1"
 
@@ -417,6 +417,9 @@ def analyze(market, btc):
         if score < threshold:
             return {"market": market, "pass": False, "score": score, "reason": f"점수 부족 ({score} < {threshold})", "volume_ratio": volume_ratio}
 
+        # 🔥 점수 상한선을 100점으로 제어
+        score = min(score, 100)
+
         swing_low = float(d15.low.iloc[-9:-1].min())
         atr_value = float(atr(d15, 14).iloc[-1])
         stop = min(price - atr_value * 1.25, swing_low - atr_value * 0.20)
@@ -492,39 +495,31 @@ def signal_allowed(state, a):
 def signal_message(a):
     entry, stop, tp1, tp2, tp3 = a["price"], a["stop"], a["tp1"], a["tp2"], a["tp3"]
     risk = entry - stop
+    score_tag = " [MAX]" if a["score"] == 100 else ""
 
-    return f"""🟢 <b>롱 시그널 발생</b>
-━━━━━━━━━━━━━━━━━━
-💰 <b>{display_name(a["market"])}</b>
+    return f"""🚀 <b>[QUANT MTF CONFLUENCE SIGNAL]</b>
+────────────────────────
+💰 <b>{display_name(a["market"])}</b> | {a["market"]}
+📊 <b>신호 점수</b>: {a["score"]} / 100점<code>{score_tag}</code>
+₿ <b>BTC Regime</b>: {a["btc_state"]}
+────────────────────────
+🎯 <b>MULTI-LEVEL TARGETS & R:R</b>
+  ├ <b>TP1</b>: {fp(tp1)} ({(tp1-entry)/entry*100:+.2f}%) | <b>R:R 1 : {(tp1-entry)/risk:.2f}</b>
+  ├ <b>TP2</b>: {fp(tp2)} ({(tp2-entry)/entry*100:+.2f}%) | <b>R:R 1 : {(tp2-entry)/risk:.2f}</b>
+  └ <b>TP3</b>: {fp(tp3)} ({(tp3-entry)/entry*100:+.2f}%) | <b>R:R 1 : {(tp3-entry)/risk:.2f}</b>
 
-📊 신호 점수  <b>{a["score"]} / 100</b>
-₿ 비트코인 상태  <b>{a["btc_state"]}</b>
-━━━━━━━━━━━━━━━━━━
-🎯 <b>매매 계획</b>
-
-진입가      <b>{fp(entry)}</b>
-손절가      <b>{fp(stop)}</b>
-
-익절 1      <b>{fp(tp1)}</b>  ({(tp1-entry)/entry*100:+.2f}%)
-익절 2      <b>{fp(tp2)}</b>  ({(tp2-entry)/entry*100:+.2f}%)
-익절 3      <b>{fp(tp3)}</b>  ({(tp3-entry)/entry*100:+.2f}%)
-━━━━━━━━━━━━━━━━━━
-🛡️ <b>리스크 관리</b>
-
-손절폭      <b>{(stop-entry)/entry*100:+.2f}%</b>
-익절 1 R:R  1 : {(tp1-entry)/risk:.2f}
-익절 2 R:R  1 : {(tp2-entry)/risk:.2f}
-익절 3 R:R  1 : {(tp3-entry)/risk:.2f}
-━━━━━━━━━━━━━━━━━━
-📈 <b>시장 상태</b>
-
-RSI         {a["rsi"]:.1f}
-ADX         {a["adx"]:.1f}
-거래량      <b>{a["volume_ratio"]:.0f}%</b>
-EMA20 이격  {a["ema_distance_pct"]:+.2f}%
-진입 유형   <b>{a["entry_type"]}</b>
-━━━━━━━━━━━━━━━━━━
-<a href="{tv(a["market"])}">📈 TradingView 차트 열기</a>"""
+🛡️ <b>RISK MANAGEMENT</b>
+  ├ <b>진입가 (ENTRY)</b>: {fp(entry)}
+  └ <b>손절가 (SL)</b>: {fp(stop)} ({(stop-entry)/entry*100:+.2f}%) ⚠️
+────────────────────────
+📈 <b>MARKET METRICS</b>
+  ├ <b>진입 유형</b>: {a["entry_type"]}
+  ├ <b>15M 수급 강도</b>: {a["volume_ratio"]:.0f}% 유입 🔥
+  ├ <b>EMA20 이격</b>: {a["ema_distance_pct"]:+.2f}%
+  └ <b>RSI / ADX</b>: {a["rsi"]:.1f} / {a["adx"]:.1f}
+────────────────────────
+💡 <i>Strategy: 1D/4H/15M MTF Confluence & {a["entry_type"]}</i>
+🔗 <a href="{tv(a["market"])}"><b>[ TradingView 차트 열기 ]</b></a>"""
 
 
 # ============================================================
