@@ -1,6 +1,25 @@
 {
-  "version": "5.7",
-  "positions": {},
-  "sent_signal_ids": [],
-  "last_signals": {}
+  "version": "5.8",
+  "positions": {
+    "KRW-KITE": {
+      "market": "KRW-KITE",
+      "direction": "LONG",
+      "entry": 184.0,
+      "sl": 180.8328521953051,
+      "tp1": 188.75072170704237,
+      "tp2": 190.3342956093898,
+      "tp3": 193.50144341408472,
+      "created_at": "2026-09-30T03:48:52.495618+00:00"
+    }
+  },
+  "sent_signal_ids": [
+    "a02faffc25f84c245aac"
+  ],
+  "last_signals": {
+    "KRW-KITE": {
+      "time": "2026-09-30T03:48:52.495658+00:00",
+      "price": 184.0,
+      "score": 80
+    }
+  }
 }
