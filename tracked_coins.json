@@ -1,9 +1,21 @@
 {
-  "version": "5.8",
-  "positions": {},
+  "version": "6.0",
+  "positions": {
+    "KRW-IN": {
+      "market": "KRW-IN",
+      "direction": "LONG",
+      "entry": 51.3,
+      "sl": 50.787,
+      "tp1": 52.06949999999999,
+      "tp2": 52.32599999999999,
+      "tp3": 52.83899999999999,
+      "created_at": "2026-09-30T04:34:19.363089+00:00"
+    }
+  },
   "sent_signal_ids": [
     "a02faffc25f84c245aac",
-    "04f4c9adfcae0b4f8c74"
+    "04f4c9adfcae0b4f8c74",
+    "b7de9a23a6ca2a9df9ae"
   ],
   "last_signals": {
     "KRW-KITE": {
@@ -15,6 +27,11 @@
       "time": "2026-09-30T03:54:47.611122+00:00",
       "price": 2008.0,
       "score": 110
+    },
+    "KRW-IN": {
+      "time": "2026-09-30T04:34:19.363130+00:00",
+      "price": 51.3,
+      "score": 105
     }
   }
 }
