@@ -1,22 +1,23 @@
 {
   "version": "6.0",
   "positions": {
-    "KRW-SPK": {
-      "market": "KRW-SPK",
+    "KRW-TRX": {
+      "market": "KRW-TRX",
       "direction": "LONG",
-      "entry": 32.2,
-      "sl": 31.4592329069436,
-      "tp1": 33.3111506395846,
-      "tp2": 33.681534186112806,
-      "tp3": 34.422301279169204,
-      "created_at": "2026-09-30T04:42:10.025448+00:00"
+      "entry": 457.0,
+      "sl": 452.43,
+      "tp1": 463.855,
+      "tp2": 466.14,
+      "tp3": 470.71,
+      "created_at": "2026-09-30T04:49:36.166198+00:00"
     }
   },
   "sent_signal_ids": [
     "a02faffc25f84c245aac",
     "04f4c9adfcae0b4f8c74",
     "b7de9a23a6ca2a9df9ae",
-    "1044ecb7fb396557386d"
+    "1044ecb7fb396557386d",
+    "e5e410228f34b9cb9c7e"
   ],
   "last_signals": {
     "KRW-KITE": {
@@ -38,6 +39,11 @@
       "time": "2026-09-30T04:42:10.025492+00:00",
       "price": 32.2,
       "score": 100
+    },
+    "KRW-TRX": {
+      "time": "2026-09-30T04:49:36.166251+00:00",
+      "price": 457.0,
+      "score": 95
     }
   }
 }
