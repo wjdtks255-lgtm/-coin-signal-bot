@@ -1,17 +1,6 @@
 {
   "version": "5.8",
-  "positions": {
-    "KRW-FLUID": {
-      "market": "KRW-FLUID",
-      "direction": "LONG",
-      "entry": 2008.0,
-      "sl": 1974.9230168690965,
-      "tp1": 2057.6154746963552,
-      "tp2": 2074.153966261807,
-      "tp3": 2107.2309493927105,
-      "created_at": "2026-09-30T03:54:47.611083+00:00"
-    }
-  },
+  "positions": {},
   "sent_signal_ids": [
     "a02faffc25f84c245aac",
     "04f4c9adfcae0b4f8c74"
