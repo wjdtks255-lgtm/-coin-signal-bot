@@ -7,7 +7,7 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime, timezone
 
-VERSION = "5.8"
+VERSION = "6.0"
 
 BASE = "https://api.upbit.com/v1"
 
@@ -18,38 +18,34 @@ TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # ============================================================
-# SIGNAL SETTINGS (횡보/눌림목 포착 최적화)
+# SIGNAL SETTINGS
 # ============================================================
 
 MAX_DEEP_SCAN = 180
 MIN_24H_VALUE = 1_000_000_000
 
-# 시그널 통과 점수 조율 (기존 75점 -> 70점으로 조정하여 타점 포착률 향상)
-SIGNAL_SCORE = 70
+# 시그널 통과 점수
+SIGNAL_SCORE = 65
 WEAK_SCORE = 75
 CRASH_SCORE = 85
 
 MIN_VOLUME_RATIO = 120
-STRONG_VOLUME_RATIO = 170
+STRONG_VOLUME_RATIO = 160
 
-MAX_EMA_DISTANCE = 4.5
-MIN_RSI = 48
-MAX_RSI = 78
-
-MIN_ADX = 15
+MAX_EMA_DISTANCE = 6.5  # 바닥 튀어오름 고려하여 이격도 범위 확대 (4.5 -> 6.5)
+MIN_RSI = 35            # 과매도 바닥 반등 잡기 위해 하한선 하향 (48 -> 35)
+MAX_RSI = 80
 
 MIN_SL = 1.0
-MAX_SL = 7.0
-MAX_TP1 = 15.0
+MAX_SL = 8.0
 
 COOLDOWN_HOURS = 4
-MIN_PRICE_DISTANCE = 1.5
 
 BTC_15M_CRASH = -1.5
 BTC_1H_CRASH = -2.0
 
 PULLBACK_LOOKBACK = 8
-MAX_CANDLE_BODY = 3.5
+MAX_CANDLE_BODY = 5.0   # 바닥 장대양봉 감지 허용 (3.5 -> 5.0)
 
 S = requests.Session()
 MARKET_INFO = {}
@@ -230,6 +226,14 @@ def rsi(series, length=14):
     return (100 - 100 / (1 + rs)).fillna(50)
 
 
+def stochastic_fast(df, k_period=5, d_period=3):
+    low_min = df.low.rolling(k_period).min()
+    high_max = df.high.rolling(k_period).max()
+    k = 100 * ((df.close - low_min) / (high_max - low_min).replace(0, np.nan))
+    d = k.rolling(d_period).mean()
+    return k.fillna(50), d.fillna(50)
+
+
 def atr(df, length=14):
     previous_close = df.close.shift()
     tr = pd.concat([
@@ -278,7 +282,7 @@ def timeframe_state(df):
         long_score += 1
     if ema20_value >= ema50_value:
         long_score += 1
-    if rsi_value >= 48:
+    if rsi_value >= 40:
         long_score += 1
 
     return {
@@ -340,17 +344,29 @@ def analyze(market, btc):
         if any(x is None for x in [a15, a1, a4, ad]):
             return {"market": market, "pass": False, "reason": "데이터 부족"}
 
-        # 상위 추세 조건 필터링 유연화 (1점 이상이면 통과)
-        if not (ad["long_score"] >= 1 and a4["long_score"] >= 1 and a1["long_score"] >= 1 and a15["long_score"] >= 1):
-            return {"market": market, "pass": False, "reason": "상위 추세 불충족"}
+        # 스토캐스틱 계산 (CAP 패턴용)
+        stoch_k, stoch_d = stochastic_fast(d15)
+        k_now, d_now = float(stoch_k.iloc[-1]), float(stoch_d.iloc[-1])
+        k_prev, d_prev = float(stoch_k.iloc[-2]), float(stoch_d.iloc[-2])
+        stoch_gc = (k_prev <= d_prev) and (k_now > d_now)
+
+        # CAP 스타일: 역추세 바닥 반등 패턴 확인
+        recent_min_low = float(d15.low.iloc[-20:].min())
+        price = a15["price"]
+        is_bottom_zone = (price <= recent_min_low * 1.03) or (a15["rsi"] <= 45)
+        oversold_bounce = is_bottom_zone and stoch_gc and (float(d15.close.iloc[-1]) > float(d15.open.iloc[-1]))
+
+        # 상위 추세 조건 필터링 (바닥 반등 패턴일 경우 일봉 강제 제한 통과)
+        trend_pass = (ad["long_score"] >= 1 and a4["long_score"] >= 1 and a1["long_score"] >= 1 and a15["long_score"] >= 1)
+        if not (trend_pass or oversold_bounce):
+            return {"market": market, "pass": False, "reason": "추세 및 바닥반등 조건 모두 불충족"}
 
         rsi15 = a15["rsi"]
         if rsi15 < MIN_RSI:
-            return {"market": market, "pass": False, "reason": f"RSI 약함 ({rsi15:.1f})"}
+            return {"market": market, "pass": False, "reason": f"RSI 과매도 ({rsi15:.1f})"}
         if rsi15 > MAX_RSI:
             return {"market": market, "pass": False, "reason": f"RSI 과열 ({rsi15:.1f})"}
 
-        price = a15["price"]
         ema_distance = (price - a15["ema20"]) / a15["ema20"] * 100
         if ema_distance > MAX_EMA_DISTANCE:
             return {"market": market, "pass": False, "reason": f"추격진입 차단 (EMA +{ema_distance:.2f}%)"}
@@ -360,18 +376,17 @@ def analyze(market, btc):
         volume_ratio = (float(volume.iloc[-1]) / average_volume * 100) if average_volume > 0 else 0
         minimum_volume = STRONG_VOLUME_RATIO if btc["state"] in ("WEAK", "CRASH") else MIN_VOLUME_RATIO
 
-        if volume_ratio < minimum_volume:
+        if volume_ratio < minimum_volume and not oversold_bounce:
             return {"market": market, "pass": False, "reason": f"거래량 부족 ({volume_ratio:.0f}% < {minimum_volume}%)", "volume_ratio": volume_ratio}
 
         current_open = float(d15.open.iloc[-1])
-        current_high = float(d15.high.iloc[-1])
-        current_low = float(d15.low.iloc[-1])
         current_close = float(d15.close.iloc[-1])
 
         body_pct = abs(current_close - current_open) / current_open * 100
         if body_pct > MAX_CANDLE_BODY:
             return {"market": market, "pass": False, "reason": f"급등 추격 차단 (캔들 {body_pct:.2f}%)", "volume_ratio": volume_ratio}
 
+        # 진입 유효성 조건 (눌림목 / 돌파 / 바닥반등)
         ema20_series = ema(d15.close, 20)
         previous_low = float(d15.low.iloc[-PULLBACK_LOOKBACK:-1].min())
         previous_close = float(d15.close.iloc[-2])
@@ -386,8 +401,8 @@ def analyze(market, btc):
         previous_high = float(d15.high.iloc[-21:-1].max())
         breakout = current_close > previous_high
 
-        if not (pullback_signal or (breakout and strong_recovery)):
-            return {"market": market, "pass": False, "reason": "눌림/재상승 조건 불충족", "volume_ratio": volume_ratio}
+        if not (pullback_signal or breakout or oversold_bounce):
+            return {"market": market, "pass": False, "reason": "진입 패턴 미포착", "volume_ratio": volume_ratio}
 
         score = 50
         if ad["long_score"] >= 2: score += 10
@@ -396,6 +411,7 @@ def analyze(market, btc):
         if volume_ratio >= 150: score += 10
         if pullback_signal: score += 10
         if breakout: score += 10
+        if oversold_bounce: score += 15  # 바닥 반등 보너스 점수
 
         threshold = CRASH_SCORE if btc["state"] == "CRASH" else WEAK_SCORE if btc["state"] == "WEAK" else SIGNAL_SCORE
         if score < threshold:
@@ -417,11 +433,13 @@ def analyze(market, btc):
         tp2 = price + risk * 2.0
         tp3 = price + risk * 3.0
 
+        entry_type = "BOTTOM_BOUNCE" if oversold_bounce else ("PULLBACK" if pullback_signal else "BREAKOUT")
+
         return {
             "market": market, "pass": True, "score": score, "price": price, "stop": stop,
             "tp1": tp1, "tp2": tp2, "tp3": tp3, "rsi": rsi15, "adx": a15["adx"],
             "volume_ratio": volume_ratio, "ema_distance_pct": ema_distance,
-            "btc_state": btc["state"], "pullback": pullback_signal, "breakout": breakout
+            "btc_state": btc["state"], "entry_type": entry_type
         }
     except Exception as e:
         return {"market": market, "pass": False, "reason": f"분석 오류: {e}"}
@@ -474,7 +492,6 @@ def signal_allowed(state, a):
 def signal_message(a):
     entry, stop, tp1, tp2, tp3 = a["price"], a["stop"], a["tp1"], a["tp2"], a["tp3"]
     risk = entry - stop
-    pullback_text = "PASS" if a.get("pullback") else "BREAKOUT"
 
     return f"""🟢 <b>롱 시그널 발생</b>
 ━━━━━━━━━━━━━━━━━━
@@ -505,7 +522,7 @@ RSI         {a["rsi"]:.1f}
 ADX         {a["adx"]:.1f}
 거래량      <b>{a["volume_ratio"]:.0f}%</b>
 EMA20 이격  {a["ema_distance_pct"]:+.2f}%
-진입 유형   <b>{pullback_text}</b>
+진입 유형   <b>{a["entry_type"]}</b>
 ━━━━━━━━━━━━━━━━━━
 <a href="{tv(a["market"])}">📈 TradingView 차트 열기</a>"""
 
@@ -520,8 +537,6 @@ def main():
     print("=" * 60)
 
     state = get_state()
-    
-    # [수정] 오랫동안 누적된 포지션 스킵 방지를 위해 이번 스캔 전 active position 자동 초기화
     state["positions"] = {}
 
     btc = btc_regime()
