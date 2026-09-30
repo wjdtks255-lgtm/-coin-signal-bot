@@ -7,7 +7,7 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime, timezone
 
-VERSION = "5.7"
+VERSION = "5.8"
 
 BASE = "https://api.upbit.com/v1"
 
@@ -18,42 +18,38 @@ TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # ============================================================
-# SIGNAL SETTINGS
+# SIGNAL SETTINGS (횡보/눌림목 포착 최적화)
 # ============================================================
 
-# 스캔 대상 80개 -> 180개로 전격 확대 (KRW 마켓 주요 종목 전수조사)
 MAX_DEEP_SCAN = 180
 MIN_24H_VALUE = 1_000_000_000
 
-SIGNAL_SCORE = 75
-WEAK_SCORE = 80
+# 시그널 통과 점수 조율 (기존 75점 -> 70점으로 조정하여 타점 포착률 향상)
+SIGNAL_SCORE = 70
+WEAK_SCORE = 75
 CRASH_SCORE = 85
 
-# 거래량 비율 가이드라인
 MIN_VOLUME_RATIO = 120
-STRONG_VOLUME_RATIO = 180
+STRONG_VOLUME_RATIO = 170
 
-# EMA 이격도 및 RSI 기준
-MAX_EMA_DISTANCE = 4.0
-MIN_RSI = 50
-MAX_RSI = 75
+MAX_EMA_DISTANCE = 4.5
+MIN_RSI = 48
+MAX_RSI = 78
 
-MIN_ADX = 16
+MIN_ADX = 15
 
-# 손절 / 익절 설정
 MIN_SL = 1.0
 MAX_SL = 7.0
 MAX_TP1 = 15.0
 
-COOLDOWN_HOURS = 6
-MIN_PRICE_DISTANCE = 2.0
+COOLDOWN_HOURS = 4
+MIN_PRICE_DISTANCE = 1.5
 
-# BTC 하락장 경고 기준
 BTC_15M_CRASH = -1.5
 BTC_1H_CRASH = -2.0
 
 PULLBACK_LOOKBACK = 8
-MAX_CANDLE_BODY = 3.0
+MAX_CANDLE_BODY = 3.5
 
 S = requests.Session()
 MARKET_INFO = {}
@@ -271,22 +267,18 @@ def timeframe_state(df):
     e20 = ema(close, 20)
     e50 = ema(close, 50)
     rr = rsi(close)
-    aa = atr(df)
-    dd = adx(df)
 
     price = float(close.iloc[-1])
     ema20_value = float(e20.iloc[-1])
     ema50_value = float(e50.iloc[-1])
     rsi_value = float(rr.iloc[-1])
-    atr_value = float(aa.iloc[-1])
-    adx_value = float(dd.iloc[-1])
 
     long_score = 0
-    if price > ema20_value and ema20_value > ema50_value:
-        long_score += 2
-    if rsi_value >= 50:
+    if price >= ema20_value:
         long_score += 1
-    if price > float(close.iloc[-2]):
+    if ema20_value >= ema50_value:
+        long_score += 1
+    if rsi_value >= 48:
         long_score += 1
 
     return {
@@ -294,9 +286,8 @@ def timeframe_state(df):
         "ema20": ema20_value,
         "ema50": ema50_value,
         "rsi": rsi_value,
-        "atr": atr_value,
-        "adx": adx_value,
-        "long_score": min(long_score, 4)
+        "adx": float(adx(df).iloc[-1]),
+        "long_score": long_score
     }
 
 
@@ -349,8 +340,8 @@ def analyze(market, btc):
         if any(x is None for x in [a15, a1, a4, ad]):
             return {"market": market, "pass": False, "reason": "데이터 부족"}
 
-        # [수정 완화] 3점 이상 유지를 2점 이상으로 하향 조율하여 유연하게 반응하도록 변경
-        if not (ad["long_score"] >= 2 and a4["long_score"] >= 2 and a1["long_score"] >= 2 and a15["long_score"] >= 2):
+        # 상위 추세 조건 필터링 유연화 (1점 이상이면 통과)
+        if not (ad["long_score"] >= 1 and a4["long_score"] >= 1 and a1["long_score"] >= 1 and a15["long_score"] >= 1):
             return {"market": market, "pass": False, "reason": "상위 추세 불충족"}
 
         rsi15 = a15["rsi"]
@@ -358,9 +349,6 @@ def analyze(market, btc):
             return {"market": market, "pass": False, "reason": f"RSI 약함 ({rsi15:.1f})"}
         if rsi15 > MAX_RSI:
             return {"market": market, "pass": False, "reason": f"RSI 과열 ({rsi15:.1f})"}
-
-        if a15["adx"] < MIN_ADX:
-            return {"market": market, "pass": False, "reason": f"추세 약함 ADX {a15['adx']:.1f}"}
 
         price = a15["price"]
         ema_distance = (price - a15["ema20"]) / a15["ema20"] * 100
@@ -380,9 +368,7 @@ def analyze(market, btc):
         current_low = float(d15.low.iloc[-1])
         current_close = float(d15.close.iloc[-1])
 
-        candle_range = max(current_high - current_low, 1e-9)
         body_pct = abs(current_close - current_open) / current_open * 100
-
         if body_pct > MAX_CANDLE_BODY:
             return {"market": market, "pass": False, "reason": f"급등 추격 차단 (캔들 {body_pct:.2f}%)", "volume_ratio": volume_ratio}
 
@@ -392,8 +378,8 @@ def analyze(market, btc):
         ema20_now = float(ema20_series.iloc[-1])
         ema20_prev = float(ema20_series.iloc[-2])
 
-        pullback_touched = previous_low <= ema20_prev * 1.015
-        recovery = current_close > previous_close and current_close > ema20_now
+        pullback_touched = previous_low <= ema20_prev * 1.02
+        recovery = current_close > previous_close and current_close >= ema20_now
         strong_recovery = current_close > current_open
         pullback_signal = pullback_touched and recovery and strong_recovery
 
@@ -404,10 +390,10 @@ def analyze(market, btc):
             return {"market": market, "pass": False, "reason": "눌림/재상승 조건 불충족", "volume_ratio": volume_ratio}
 
         score = 50
-        if ad["long_score"] >= 3: score += 10
-        if a4["long_score"] >= 3: score += 10
-        if a1["long_score"] >= 3: score += 10
-        if volume_ratio >= 180: score += 10
+        if ad["long_score"] >= 2: score += 10
+        if a4["long_score"] >= 2: score += 10
+        if a1["long_score"] >= 2: score += 10
+        if volume_ratio >= 150: score += 10
         if pullback_signal: score += 10
         if breakout: score += 10
 
@@ -467,8 +453,6 @@ def signal_id(a):
 
 def signal_allowed(state, a):
     market = a["market"]
-    if market in state["positions"]:
-        return False
     if signal_id(a) in state["sent_signal_ids"]:
         return False
 
@@ -536,6 +520,10 @@ def main():
     print("=" * 60)
 
     state = get_state()
+    
+    # [수정] 오랫동안 누적된 포지션 스킵 방지를 위해 이번 스캔 전 active position 자동 초기화
+    state["positions"] = {}
+
     btc = btc_regime()
     print(f'BTC: {btc["state"]} | 15M {btc["c15"]:+.2f}% | 1H {btc["c1"]:+.2f}%')
 
@@ -554,11 +542,6 @@ def main():
     results = []
     for ticker in candidates:
         market = ticker["market"]
-        
-        # 감시 수량이 과도하게 차 있는 경우 자동 정리 기능 지원
-        if market in state["positions"]:
-            print("SKIP ACTIVE", display_name(market))
-            continue
 
         result = analyze(market, btc)
         if result.get("pass"):
