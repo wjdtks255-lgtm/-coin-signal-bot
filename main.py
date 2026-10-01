@@ -1,7 +1,7 @@
 import os, json, hashlib, requests, numpy as np, pandas as pd
 from datetime import datetime, timezone
 
-V = "7.0"
+V = "7.1"
 BASE = "https://api.upbit.com/v1"
 STATE = "tracked_coins.json"
 TOKEN = os.getenv("TELEGRAM_TOKEN", "")
@@ -256,55 +256,67 @@ def tg(msg):
         ).ok
     except: return False
 
-def reason(a):
-    r = []
-    if a["trend"] >= 3: r.append("1D·4H·1H 추세 정렬")
-    elif a["trend"] == 2: r.append("상위 시간대 추세 우위")
+def reason_list(a):
+    reasons = []
+    if a.get("trend", 0) >= 3:
+        reasons.append("<b>추세 정렬</b>: 1D · 4H · 1H 상위 시간대 정배열")
+    elif a.get("trend", 0) == 2:
+        reasons.append("<b>추세 우위</b>: 상위 시간대 상승 모멘텀 유지")
+    else:
+        reasons.append("<b>구조 회복</b>: 단기 이동평균선(EMA20) 재돌파")
 
-    if a["vol"] >= 180: r.append(f"거래량 {a['vol']:.0f}% 급증")
-    elif a["vol"] >= MIN_VOL: r.append(f"거래량 {a['vol']:.0f}% 증가")
+    vol = a.get("vol", 0)
+    if vol >= 180:
+        reasons.append(f"<b>수급 강도</b>: 15M 거래량 {vol:.0f}% 급증 (평균 대비) 🔥")
+    elif vol >= MIN_VOL:
+        reasons.append(f"<b>수급 유입</b>: 15M 거래량 {vol:.0f}% 유입 확인")
 
-    if a["bounce"]: r.append("저점권 + 스토캐스틱 반전")
-    elif a["type"] == "BREAKOUT": r.append("최근 20봉 고점 돌파")
-    else: r.append("EMA20 회복형 눌림")
+    stype = a.get("type", "")
+    if a.get("bounce") or stype == "BOTTOM BOUNCE":
+        reasons.append("<b>시그널 포착</b>: 저점권 과매도 + 스토캐스틱 반전")
+    elif stype == "BREAKOUT":
+        reasons.append("<b>돌파 파동</b>: 최근 20봉 고점 강한 상방 돌파")
+    else:
+        reasons.append("<b>눌림목 완성</b>: EMA20 지지 확인 후 재반등")
 
-    if a["recovery"]: r.append("상승 캔들·단기 회복 확인")
-    if a["adx"] >= 18: r.append(f"ADX {a['adx']:.1f} 추세 강화")
+    if a.get("recovery", True):
+        reasons.append("<b>모멘텀 확인</b>: 단기 EMA20 회복 & 양봉 캔들 완성")
 
-    return " · ".join(r[:4])
+    return reasons[:4]
 
 def message(a):
     p = a["price"]
     s = a["stop"]
-    sl = (s / p - 1) * 100
-    r1 = (a["tp1"] / p - 1) * 100
-    r2 = (a["tp2"] / p - 1) * 100
-    r3 = (a["tp3"] / p - 1) * 100
+    sl_pct = (s / p - 1) * 100
+    tp1, tp2, tp3 = a["tp1"], a["tp2"], a["tp3"]
+    score_tag = " [MAX]" if a["score"] == 100 else ""
+    stype = a.get("type", "QUANT_SIGNAL")
+    
+    reasons = reason_list(a)
+    reason_fmt = "\n".join([f"  ├ {r}" for r in reasons[:-1]] + [f"  └ {reasons[-1]}"]) if reasons else "  └ 기술적 반등 조건 충족"
 
-    return f"""🚀 <b>UPBIT SPOT SIGNAL V7</b>
-━━━━━━━━━━━━━━━━
-💎 <b>{name(a['market'])}</b> <code>{a['market']}</code>
-🎯 <b>조건점수 {a['score']}/100</b> | {a['type']}
+    return f"""🚀 <b>[QUANT MTF CONFLUENCE SIGNAL]</b>
+────────────────────────
+💎 <b>{name(a['market'])}</b> | <code>{a['market']}</code>
+🎯 <b>신호 점수</b>: {a['score']} / 100점<code>{score_tag}</code> | <b>{stype}</b>
+────────────────────────
+📈 <b>CORE BULLISH CATALYSTS (상승 핵심 근거)</b>
+{reason_fmt}
+────────────────────────
+🎯 <b>TARGETS & EXPECTED RETURN</b>
+  ├ <b>TP1</b>: {fp(tp1)} ({(tp1/p-1)*100:+.2f}%) | <b>1.5R</b>
+  ├ <b>TP2</b>: {fp(tp2)} ({(tp2/p-1)*100:+.2f}%) | <b>2.0R</b>
+  └ <b>TP3</b>: {fp(tp3)} ({(tp3/p-1)*100:+.2f}%) | <b>3.0R</b>
 
-💰 ENTRY <b>{fp(p)}</b>
-🛡 SL <b>{fp(s)}</b> ({sl:.2f}%)
-
-📈 <b>상승 근거</b>
-• {reason(a)}
-• RSI {a['rsi']:.1f} | ADX {a['adx']:.1f}
-• EMA20 이격 {a['dist']:+.2f}%
-• BTC Regime <b>{a['regime']}</b>
-
-🎯 <b>TARGET</b>
-TP1 {fp(a['tp1'])} (+{r1:.2f}%) · 1.5R
-TP2 {fp(a['tp2'])} (+{r2:.2f}%) · 2.0R
-TP3 {fp(a['tp3'])} (+{r3:.2f}%) · 3.0R
-
-🔄 TP1 → SL ENTRY
-🔄 TP2 → SL TP1
-🏁 TP3 → 추적 종료
-
-🔗 <a href="https://www.tradingview.com/symbols/UPBIT-{a['market'][4:]}KRW/">TradingView</a>"""
+🛡️ <b>RISK MANAGEMENT & STRATEGY</b>
+  ├ <b>진입가 (ENTRY)</b>: {fp(p)}
+  ├ <b>손절가 (SL)</b>: {fp(s)} ({sl_pct:.2f}%) ⚠️
+  ├ <b>RSI / ADX</b>: {a['rsi']:.1f} / {a['adx']:.1f}
+  ├ <b>EMA20 이격</b>: {a['dist']:+.2f}% | <b>BTC Regime</b>: {a['regime']}
+  └ <b>운영 규칙</b>: TP1 달성 시 SL→ENTRY / TP2 달성 시 SL→TP1
+────────────────────────
+💡 <i>Strategy: Multi-Timeframe Confluence & {stype}</i>
+🔗 <a href="https://www.tradingview.com/symbols/UPBIT-{a['market'].replace('KRW-', '')}KRW/"><b>[ TradingView 차트 열기 ]</b></a>"""
 
 def track(state):
     if not state["positions"]: return
