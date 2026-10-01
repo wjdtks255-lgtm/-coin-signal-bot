@@ -1,14 +1,14 @@
 import os, json, hashlib, requests, numpy as np, pandas as pd
 from datetime import datetime, timezone
 
-V = "7.1"
+V = "7.2"
 BASE = "https://api.upbit.com/v1"
 STATE = "tracked_coins.json"
 TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 MIN_VALUE = 1_000_000_000
 MAX_SCAN = 120
-MAX_POSITIONS = 3
+MAX_POSITIONS = 9999  # 개수 제한 없이 기준에 부합하면 전부 전송
 MIN_SCORE = 75
 WEAK_SCORE = 82
 CRASH_SCORE = 88
@@ -393,11 +393,6 @@ def main():
     regime, c15, c1 = btc_regime()
     print(f"BTC {regime} | 15M {c15:+.2f}% | 1H {c1:+.2f}%")
 
-    if len(state["positions"]) >= MAX_POSITIONS:
-        state["version"] = V
-        save(STATE, state)
-        return
-
     qs = api(
         "/ticker",
         {"markets": ",".join(NAMES.keys())}
@@ -425,11 +420,9 @@ def main():
         reverse=True
     )
 
+    # 발견된 모든 적격 시그널을 제한 없이 전부 발송
     for a in results:
         m = a["market"]
-
-        if m in state["positions"]:
-            continue
 
         last = state["last"].get(m)
 
@@ -462,7 +455,6 @@ def main():
             state["last"][m] = now().isoformat()
 
             print("NEW SIGNAL:", name(m), a["score"])
-            break
 
     state["version"] = V
     save(STATE, state)
