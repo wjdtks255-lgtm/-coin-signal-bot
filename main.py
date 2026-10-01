@@ -1,598 +1,459 @@
-import os
-import json
-import hashlib
-import requests
-import numpy as np
-import pandas as pd
-import yfinance as yf
-from datetime import datetime, timezone
+import os,json,hashlib,requests,numpy as np,pandas as pd
+from datetime import datetime,timezone
 
-VERSION = "6.1"
+V="7.0"
+BASE="https://api.upbit.com/v1"
+STATE="tracked_coins.json"
+TOKEN=os.getenv("TELEGRAM_TOKEN","")
+CHAT=os.getenv("TELEGRAM_CHAT_ID","")
+MIN_VALUE=1_000_000_000
+MAX_SCAN=120
+MAX_POSITIONS=3
+MIN_SCORE=75
+WEAK_SCORE=82
+CRASH_SCORE=88
+COOLDOWN=4
+MIN_VOL=130
+STRONG_VOL=180
+MAX_EMA=5.0
+MIN_RSI=35
+MAX_RSI=78
+MIN_SL=1.0
+MAX_SL=6.0
+S=requests.Session()
+NAMES={}
 
-BASE = "https://api.upbit.com/v1"
+def now(): return datetime.now(timezone.utc)
 
-STATE_FILE = "tracked_coins.json"
-LOG_FILE = "bot_log.json"
+def load(p,d):
+    try:
+        with open(p,encoding="utf-8") as f:return json.load(f)
+    except:return d
 
-TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
+def save(p,d):
+    with open(p+".tmp","w",encoding="utf-8") as f:
+        json.dump(d,f,ensure_ascii=False,separators=(",",":"))
+    os.replace(p+".tmp",p)
 
-# ============================================================
-# SIGNAL SETTINGS
-# ============================================================
-
-MAX_DEEP_SCAN = 180
-MIN_24H_VALUE = 1_000_000_000
-
-# 시그널 통과 점수
-SIGNAL_SCORE = 65
-WEAK_SCORE = 75
-CRASH_SCORE = 85
-
-MIN_VOLUME_RATIO = 120
-STRONG_VOLUME_RATIO = 160
-
-MAX_EMA_DISTANCE = 6.5  # 바닥 튀어오름 고려하여 이격도 범위 확대 (4.5 -> 6.5)
-MIN_RSI = 35            # 과매도 바닥 반등 잡기 위해 하한선 하향 (48 -> 35)
-MAX_RSI = 80
-
-MIN_SL = 1.0
-MAX_SL = 8.0
-
-COOLDOWN_HOURS = 4
-
-BTC_15M_CRASH = -1.5
-BTC_1H_CRASH = -2.0
-
-PULLBACK_LOOKBACK = 8
-MAX_CANDLE_BODY = 5.0   # 바닥 장대양봉 감지 허용 (3.5 -> 5.0)
-
-S = requests.Session()
-MARKET_INFO = {}
-
-
-# ============================================================
-# BASIC UTILS
-# ============================================================
-
-def now():
-    return datetime.now(timezone.utc)
-
+def num(x,d=0):
+    try:return float(x)
+    except:return d
 
 def fp(x):
-    x = float(x)
-    if x >= 1000:
-        return f"{x:,.2f}"
-    if x >= 1:
-        return f"{x:,.3f}"
-    if x >= 0.01:
-        return f"{x:,.4f}"
+    x=float(x)
+    if x>=1000:return f"{x:,.0f}"
+    if x>=1:return f"{x:,.3f}"
+    if x>=.01:return f"{x:,.4f}"
     return f"{x:,.8f}"
 
-
-def sf(x, default=0):
+def api(path,params=None):
     try:
-        return float(x)
-    except Exception:
-        return default
-
-
-def load(path, default):
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return default
-
-
-def save(path, data):
-    temp = path + ".tmp"
-    with open(temp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(temp, path)
-
-
-def log(event, data=None):
-    items = load(LOG_FILE, [])
-    if not isinstance(items, list):
-        items = []
-    items.append({
-        "time": now().isoformat(),
-        "event": event,
-        "data": data or {}
-    })
-    save(LOG_FILE, items[-1000:])
-
-
-# ============================================================
-# UPBIT API
-# ============================================================
-
-def up(path, params=None):
-    try:
-        r = S.get(BASE + path, params=params, timeout=15)
+        r=S.get(BASE+path,params=params,timeout=15)
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print("Upbit API:", e)
+        print("API:",e)
         return None
 
+def init_markets():
+    global NAMES
+    for x in api("/market/all",{"isDetails":"true"}) or []:
+        m=x["market"]
+        if m.startswith("KRW-"):
+            NAMES[m]=(x.get("korean_name") or m[4:],m[4:])
 
-def refresh_market_info():
-    global MARKET_INFO
-    data = up("/market/all", {"isDetails": "true"}) or []
-    info = {}
-    for item in data:
-        market = item.get("market", "")
-        if not market.startswith("KRW-"):
-            continue
-        ticker = market.replace("KRW-", "").upper()
-        info[market] = {
-            "ticker": ticker,
-            "korean_name": item.get("korean_name") or ticker,
-            "english_name": item.get("english_name") or ticker
-        }
-    MARKET_INFO = info
-    return info
+def name(m):
+    x=NAMES.get(m)
+    return f"{x[0]} ({x[1]})" if x else m[4:]
 
+def candles(m,u,n=210):
+    path="/candles/days" if u==1440 else f"/candles/minutes/{u}"
+    d=api(path,{"market":m,"count":n})
+    if not isinstance(d,list) or len(d)<60:return None
+    df=pd.DataFrame(d).rename(columns={
+        "opening_price":"open","high_price":"high","low_price":"low",
+        "trade_price":"close","candle_acc_trade_volume":"volume"})
+    c=["open","high","low","close","volume"]
+    df[c]=df[c].apply(pd.to_numeric,errors="coerce")
+    df=df.dropna(subset=c).iloc[::-1].reset_index(drop=True)
+    if len(df)<=60:return None
+    return df.iloc[:-1].reset_index(drop=True)
 
-def display_name(market):
-    info = MARKET_INFO.get(market)
-    if info:
-        return f'{info["korean_name"]} ({info["ticker"]})'
-    return market.replace("KRW-", "").upper()
+def ema(s,n): return s.ewm(span=n,adjust=False).mean()
 
+def rsi(s,n=14):
+    d=s.diff()
+    g=d.clip(lower=0)
+    l=-d.clip(upper=0)
+    ag=g.ewm(alpha=1/n,adjust=False).mean()
+    al=l.ewm(alpha=1/n,adjust=False).mean()
+    return (100-100/(1+ag/al.replace(0,np.nan))).fillna(50)
 
-def markets():
-    refresh_market_info()
-    return list(MARKET_INFO.keys())
+def atr(df,n=14):
+    pc=df.close.shift()
+    tr=pd.concat([
+        df.high-df.low,
+        (df.high-pc).abs(),
+        (df.low-pc).abs()],axis=1).max(axis=1)
+    return tr.ewm(alpha=1/n,adjust=False).mean()
 
+def adx(df,n=14):
+    u=df.high.diff()
+    d=-df.low.diff()
+    plus=pd.Series(np.where((u>d)&(u>0),u,0),index=df.index)
+    minus=pd.Series(np.where((d>u)&(d>0),d,0),index=df.index)
+    pc=df.close.shift()
+    tr=pd.concat([
+        df.high-df.low,
+        (df.high-pc).abs(),
+        (df.low-pc).abs()],axis=1).max(axis=1)
+    a=tr.ewm(alpha=1/n,adjust=False).mean()
+    p=100*plus.ewm(alpha=1/n,adjust=False).mean()/a.replace(0,np.nan)
+    q=100*minus.ewm(alpha=1/n,adjust=False).mean()/a.replace(0,np.nan)
+    return (100*(p-q).abs()/(p+q).replace(0,np.nan)).ewm(alpha=1/n,adjust=False).mean().fillna(0)
 
-def tickers(market_list):
-    if not market_list:
-        return []
-    return up("/ticker", {"markets": ",".join(market_list)}) or []
-
-
-# ============================================================
-# TELEGRAM
-# ============================================================
-
-def tg(message):
-    if not TOKEN or not CHAT:
-        print("Telegram credentials missing.")
-        return False
-    try:
-        r = S.post(
-            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            json={
-                "chat_id": CHAT,
-                "text": message,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": False
-            },
-            timeout=15
-        )
-        return r.ok
-    except Exception as e:
-        print("Telegram error:", e)
-        return False
-
-
-def tv(market):
-    ticker = market.replace("KRW-", "").upper()
-    return f"https://www.tradingview.com/symbols/UPBIT-{ticker}KRW/"
-
-
-# ============================================================
-# CANDLES & INDICATORS
-# ============================================================
-
-def candles(market, unit=15, count=200):
-    path = "/candles/days" if unit == 1440 else f"/candles/minutes/{unit}"
-    data = up(path, {"market": market, "count": count})
-    if not isinstance(data, list) or len(data) < 50:
-        return None
-
-    df = pd.DataFrame(data)
-    df = df.rename(columns={
-        "opening_price": "open",
-        "high_price": "high",
-        "low_price": "low",
-        "trade_price": "close",
-        "candle_acc_trade_volume": "volume",
-        "candle_acc_trade_price": "trade_value"
-    })
-    required = ["open", "high", "low", "close", "volume"]
-    if any(c not in df.columns for c in required):
-        return None
-
-    df[required] = df[required].apply(pd.to_numeric, errors="coerce")
-    df = df.dropna(subset=required)
-    return df.iloc[::-1].reset_index(drop=True)
-
-
-def ema(series, length):
-    return series.ewm(span=length, adjust=False).mean()
-
-
-def rsi(series, length=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(alpha=1 / length, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / length, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    return (100 - 100 / (1 + rs)).fillna(50)
-
-
-def stochastic_fast(df, k_period=5, d_period=3):
-    low_min = df.low.rolling(k_period).min()
-    high_max = df.high.rolling(k_period).max()
-    k = 100 * ((df.close - low_min) / (high_max - low_min).replace(0, np.nan))
-    d = k.rolling(d_period).mean()
-    return k.fillna(50), d.fillna(50)
-
-
-def atr(df, length=14):
-    previous_close = df.close.shift()
-    tr = pd.concat([
-        df.high - df.low,
-        (df.high - previous_close).abs(),
-        (df.low - previous_close).abs()
-    ], axis=1).max(axis=1)
-    return tr.ewm(alpha=1 / length, adjust=False).mean()
-
-
-def adx(df, length=14):
-    up_move = df.high.diff()
-    down_move = -df.low.diff()
-    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0), index=df.index)
-    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0), index=df.index)
-    previous_close = df.close.shift()
-    tr = pd.concat([
-        df.high - df.low,
-        (df.high - previous_close).abs(),
-        (df.low - previous_close).abs()
-    ], axis=1).max(axis=1)
-    
-    atr_value = tr.ewm(alpha=1 / length, adjust=False).mean()
-    plus_di = 100 * plus_dm.ewm(alpha=1 / length, adjust=False).mean() / atr_value.replace(0, np.nan)
-    minus_di = 100 * minus_dm.ewm(alpha=1 / length, adjust=False).mean() / atr_value.replace(0, np.nan)
-    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
-    return dx.ewm(alpha=1 / length, adjust=False).mean().fillna(0)
-
-
-def timeframe_state(df):
-    if df is None or len(df) < 50:
-        return None
-
-    close = df.close
-    e20 = ema(close, 20)
-    e50 = ema(close, 50)
-    rr = rsi(close)
-
-    price = float(close.iloc[-1])
-    ema20_value = float(e20.iloc[-1])
-    ema50_value = float(e50.iloc[-1])
-    rsi_value = float(rr.iloc[-1])
-
-    long_score = 0
-    if price >= ema20_value:
-        long_score += 1
-    if ema20_value >= ema50_value:
-        long_score += 1
-    if rsi_value >= 40:
-        long_score += 1
-
+def tf(df):
+    if df is None:return None
+    e20=ema(df.close,20)
+    e50=ema(df.close,50)
+    rr=rsi(df.close)
     return {
-        "price": price,
-        "ema20": ema20_value,
-        "ema50": ema50_value,
-        "rsi": rsi_value,
-        "adx": float(adx(df).iloc[-1]),
-        "long_score": long_score
+        "p":float(df.close.iloc[-1]),
+        "e20":float(e20.iloc[-1]),
+        "e50":float(e50.iloc[-1]),
+        "rsi":float(rr.iloc[-1]),
+        "adx":float(adx(df).iloc[-1])
     }
-
 
 def btc_regime():
-    try:
-        btc15 = yf.download("BTC-USD", period="5d", interval="15m", auto_adjust=False, progress=False, threads=False)
-        btc1h = yf.download("BTC-USD", period="10d", interval="1h", auto_adjust=False, progress=False, threads=False)
+    d=candles("KRW-BTC",15,100)
+    h=candles("KRW-BTC",60,100)
+    if d is None or h is None:return "NEUTRAL",0,0
+    c15=(d.close.iloc[-1]/d.close.iloc[-2]-1)*100
+    c1=(h.close.iloc[-1]/h.close.iloc[-2]-1)*100
+    if c15<=-1.5 or c1<=-2:return "CRASH",c15,c1
+    if c15<-.5 or c1<-.8:return "WEAK",c15,c1
+    if c15>.5 and c1>.8:return "BULL",c15,c1
+    return "NEUTRAL",c15,c1
 
-        if isinstance(btc15.columns, pd.MultiIndex):
-            btc15.columns = btc15.columns.get_level_values(0)
-        if isinstance(btc1h.columns, pd.MultiIndex):
-            btc1h.columns = btc1h.columns.get_level_values(0)
+def analyze(m,regime):
+    ds=[candles(m,u) for u in (15,60,240,1440)]
+    d15,d1,d4,dd=ds
+    a15,a1,a4,ad=[tf(x) for x in ds]
+    if any(x is None for x in (a15,a1,a4,ad)):return None
 
-        x = btc15.Close.dropna()
-        y = btc1h.Close.dropna()
+    p=a15["p"]
+    e=a15["e20"]
+    dist=(p/e-1)*100
 
-        change15 = (float(x.iloc[-1]) / float(x.iloc[-2]) - 1) * 100
-        change1h = (float(y.iloc[-1]) / float(y.iloc[-2]) - 1) * 100
+    if dist>MAX_EMA or a15["rsi"]<MIN_RSI or a15["rsi"]>MAX_RSI:return None
 
-        if change15 <= BTC_15M_CRASH or change1h <= BTC_1H_CRASH:
-            regime = "CRASH"
-        elif change15 < -0.5 or change1h < -0.8:
-            regime = "WEAK"
-        elif change15 > 0.5 and change1h > 0.8:
-            regime = "BULL"
-        else:
-            regime = "NEUTRAL"
+    trend=sum(
+        x["p"]>=x["e20"] and x["e20"]>=x["e50"]
+        for x in (a1,a4,ad)
+    )
 
-        return {"state": regime, "c15": change15, "c1": change1h}
-    except Exception:
-        return {"state": "NEUTRAL", "c15": 0, "c1": 0}
+    avg=float(d15.volume.iloc[-21:-1].mean())
+    vol=float(d15.volume.iloc[-1]/avg*100) if avg>0 else 0
+    body=abs(d15.close.iloc[-1]-d15.open.iloc[-1])/d15.open.iloc[-1]*100
 
+    low=float(d15.low.iloc[-20:].min())
+    near_low=p<=low*1.035
 
-# ============================================================
-# ANALYZE SIGNAL
-# ============================================================
+    prev_high=float(d15.high.iloc[-21:-1].max())
+    breakout=p>prev_high
 
-def analyze(market, btc):
-    try:
-        d15 = candles(market, 15, 200)
-        d1 = candles(market, 60, 200)
-        d4 = candles(market, 240, 200)
-        dd = candles(market, 1440, 200)
+    recovery=(
+        p>d15.close.iloc[-2] and
+        p>=e and
+        p>d15.open.iloc[-1]
+    )
 
-        a15 = timeframe_state(d15)
-        a1 = timeframe_state(d1)
-        a4 = timeframe_state(d4)
-        ad = timeframe_state(dd)
+    k=100*(d15.close-d15.low.rolling(5).min())/(
+        d15.high.rolling(5).max()-d15.low.rolling(5).min()
+    ).replace(0,np.nan)
 
-        if any(x is None for x in [a15, a1, a4, ad]):
-            return {"market": market, "pass": False, "reason": "데이터 부족"}
+    st_gc=(
+        k.iloc[-2]<=k.iloc[-3] and
+        k.iloc[-1]>k.iloc[-2]
+    )
 
-        # 스토캐스틱 계산 (CAP 패턴용)
-        stoch_k, stoch_d = stochastic_fast(d15)
-        k_now, d_now = float(stoch_k.iloc[-1]), float(stoch_d.iloc[-1])
-        k_prev, d_prev = float(stoch_k.iloc[-2]), float(stoch_d.iloc[-2])
-        stoch_gc = (k_prev <= d_prev) and (k_now > d_now)
+    bounce=near_low and st_gc and recovery and vol>=MIN_VOL
 
-        # CAP 스타일: 역추세 바닥 반등 패턴 확인
-        recent_min_low = float(d15.low.iloc[-20:].min())
-        price = a15["price"]
-        is_bottom_zone = (price <= recent_min_low * 1.03) or (a15["rsi"] <= 45)
-        oversold_bounce = is_bottom_zone and stoch_gc and (float(d15.close.iloc[-1]) > float(d15.open.iloc[-1]))
+    e20prev=float(ema(d15.close,20).iloc[-2])
+    pullback=(
+        float(d15.low.iloc[-9:-1].min())<=e20prev*1.02
+        and recovery
+    )
 
-        # 상위 추세 조건 필터링 (바닥 반등 패턴일 경우 일봉 강제 제한 통과)
-        trend_pass = (ad["long_score"] >= 1 and a4["long_score"] >= 1 and a1["long_score"] >= 1 and a15["long_score"] >= 1)
-        if not (trend_pass or oversold_bounce):
-            return {"market": market, "pass": False, "reason": "추세 및 바닥반등 조건 모두 불충족"}
+    if not (breakout or pullback or bounce):return None
 
-        rsi15 = a15["rsi"]
-        if rsi15 < MIN_RSI:
-            return {"market": market, "pass": False, "reason": f"RSI 과매도 ({rsi15:.1f})"}
-        if rsi15 > MAX_RSI:
-            return {"market": market, "pass": False, "reason": f"RSI 과열 ({rsi15:.1f})"}
+    minimum=STRONG_VOL if regime in ("WEAK","CRASH") else MIN_VOL
+    if vol<minimum and not bounce:return None
+    if body>5:return None
 
-        ema_distance = (price - a15["ema20"]) / a15["ema20"] * 100
-        if ema_distance > MAX_EMA_DISTANCE:
-            return {"market": market, "pass": False, "reason": f"추격진입 차단 (EMA +{ema_distance:.2f}%)"}
+    score=40
+    score+=trend*8
+    score+=10 if vol>=180 else 5 if vol>=MIN_VOL else 0
+    score+=10 if a15["rsi"]>=45 else 0
+    score+=8 if a15["adx"]>=18 else 4 if a15["adx"]>=14 else 0
+    score+=10 if recovery else 0
+    score+=10 if breakout else 0
+    score+=12 if bounce else 0
+    score+=5 if pullback else 0
+    score=min(score,100)
 
-        volume = d15.volume
-        average_volume = float(volume.iloc[-21:-1].mean())
-        volume_ratio = (float(volume.iloc[-1]) / average_volume * 100) if average_volume > 0 else 0
-        minimum_volume = STRONG_VOLUME_RATIO if btc["state"] in ("WEAK", "CRASH") else MIN_VOLUME_RATIO
+    threshold=(
+        CRASH_SCORE if regime=="CRASH"
+        else WEAK_SCORE if regime=="WEAK"
+        else MIN_SCORE
+    )
 
-        if volume_ratio < minimum_volume and not oversold_bounce:
-            return {"market": market, "pass": False, "reason": f"거래량 부족 ({volume_ratio:.0f}% < {minimum_volume}%)", "volume_ratio": volume_ratio}
+    if score<threshold:return None
 
-        current_open = float(d15.open.iloc[-1])
-        current_close = float(d15.close.iloc[-1])
+    av=float(atr(d15).iloc[-1])
+    swing=float(d15.low.iloc[-9:-1].min())
+    stop=min(p-av*1.2,swing-av*.2)
+    risk=p-stop
 
-        body_pct = abs(current_close - current_open) / current_open * 100
-        if body_pct > MAX_CANDLE_BODY:
-            return {"market": market, "pass": False, "reason": f"급등 추격 차단 (캔들 {body_pct:.2f}%)", "volume_ratio": volume_ratio}
+    if risk<p*MIN_SL/100:
+        stop=p*(1-MIN_SL/100)
+        risk=p-stop
 
-        # 진입 유효성 조건 (눌림목 / 돌파 / 바닥반등)
-        ema20_series = ema(d15.close, 20)
-        previous_low = float(d15.low.iloc[-PULLBACK_LOOKBACK:-1].min())
-        previous_close = float(d15.close.iloc[-2])
-        ema20_now = float(ema20_series.iloc[-1])
-        ema20_prev = float(ema20_series.iloc[-2])
+    if risk>p*MAX_SL/100:return None
 
-        pullback_touched = previous_low <= ema20_prev * 1.02
-        recovery = current_close > previous_close and current_close >= ema20_now
-        strong_recovery = current_close > current_open
-        pullback_signal = pullback_touched and recovery and strong_recovery
-
-        previous_high = float(d15.high.iloc[-21:-1].max())
-        breakout = current_close > previous_high
-
-        if not (pullback_signal or breakout or oversold_bounce):
-            return {"market": market, "pass": False, "reason": "진입 패턴 미포착", "volume_ratio": volume_ratio}
-
-        score = 50
-        if ad["long_score"] >= 2: score += 10
-        if a4["long_score"] >= 2: score += 10
-        if a1["long_score"] >= 2: score += 10
-        if volume_ratio >= 150: score += 10
-        if pullback_signal: score += 10
-        if breakout: score += 10
-        if oversold_bounce: score += 15  # 바닥 반등 보너스 점수
-
-        threshold = CRASH_SCORE if btc["state"] == "CRASH" else WEAK_SCORE if btc["state"] == "WEAK" else SIGNAL_SCORE
-        if score < threshold:
-            return {"market": market, "pass": False, "score": score, "reason": f"점수 부족 ({score} < {threshold})", "volume_ratio": volume_ratio}
-
-        # 🔥 점수 상한선을 100점으로 제어
-        score = min(score, 100)
-
-        swing_low = float(d15.low.iloc[-9:-1].min())
-        atr_value = float(atr(d15, 14).iloc[-1])
-        stop = min(price - atr_value * 1.25, swing_low - atr_value * 0.20)
-        risk = price - stop
-
-        if risk < price * MIN_SL / 100:
-            stop = price - (price * MIN_SL / 100)
-            risk = price - stop
-
-        if risk > price * MAX_SL / 100:
-            return {"market": market, "pass": False, "score": score, "reason": f"손절폭 과다 ({risk/price*100:.2f}%)", "volume_ratio": volume_ratio}
-
-        tp1 = price + risk * 1.5
-        tp2 = price + risk * 2.0
-        tp3 = price + risk * 3.0
-
-        entry_type = "BOTTOM_BOUNCE" if oversold_bounce else ("PULLBACK" if pullback_signal else "BREAKOUT")
-
-        return {
-            "market": market, "pass": True, "score": score, "price": price, "stop": stop,
-            "tp1": tp1, "tp2": tp2, "tp3": tp3, "rsi": rsi15, "adx": a15["adx"],
-            "volume_ratio": volume_ratio, "ema_distance_pct": ema_distance,
-            "btc_state": btc["state"], "entry_type": entry_type
-        }
-    except Exception as e:
-        return {"market": market, "pass": False, "reason": f"분석 오류: {e}"}
-
-
-# ============================================================
-# STATE MANAGEMENT
-# ============================================================
-
-def default_state():
-    return {"version": VERSION, "positions": {}, "sent_signal_ids": [], "last_signals": {}}
-
-
-def get_state():
-    state = load(STATE_FILE, default_state())
-    if not isinstance(state, dict):
-        state = default_state()
-    state.setdefault("positions", {})
-    state.setdefault("sent_signal_ids", [])
-    state.setdefault("last_signals", {})
-    state["version"] = VERSION
-    return state
-
-
-def signal_id(a):
-    raw = f'{a["market"]}|{a["price"]:.10f}|{a["score"]}'
-    return hashlib.sha256(raw.encode()).hexdigest()[:20]
-
-
-def signal_allowed(state, a):
-    market = a["market"]
-    if signal_id(a) in state["sent_signal_ids"]:
-        return False
-
-    previous = state["last_signals"].get(market)
-    if not previous:
-        return True
-
-    try:
-        previous_time = datetime.fromisoformat(previous["time"])
-        elapsed = (now() - previous_time).total_seconds()
-        if elapsed < (COOLDOWN_HOURS * 3600):
-            return False
-    except Exception:
-        pass
-
-    return True
-
-
-def signal_message(a):
-    entry, stop, tp1, tp2, tp3 = a["price"], a["stop"], a["tp1"], a["tp2"], a["tp3"]
-    risk = entry - stop
-    score_tag = " [MAX]" if a["score"] == 100 else ""
-
-    return f"""🚀 <b>[QUANT MTF CONFLUENCE SIGNAL]</b>
-────────────────────────
-💰 <b>{display_name(a["market"])}</b> | {a["market"]}
-📊 <b>신호 점수</b>: {a["score"]} / 100점<code>{score_tag}</code>
-₿ <b>BTC Regime</b>: {a["btc_state"]}
-────────────────────────
-🎯 <b>MULTI-LEVEL TARGETS & R:R</b>
-  ├ <b>TP1</b>: {fp(tp1)} ({(tp1-entry)/entry*100:+.2f}%) | <b>R:R 1 : {(tp1-entry)/risk:.2f}</b>
-  ├ <b>TP2</b>: {fp(tp2)} ({(tp2-entry)/entry*100:+.2f}%) | <b>R:R 1 : {(tp2-entry)/risk:.2f}</b>
-  └ <b>TP3</b>: {fp(tp3)} ({(tp3-entry)/entry*100:+.2f}%) | <b>R:R 1 : {(tp3-entry)/risk:.2f}</b>
-
-🛡️ <b>RISK MANAGEMENT</b>
-  ├ <b>진입가 (ENTRY)</b>: {fp(entry)}
-  └ <b>손절가 (SL)</b>: {fp(stop)} ({(stop-entry)/entry*100:+.2f}%) ⚠️
-────────────────────────
-📈 <b>MARKET METRICS</b>
-  ├ <b>진입 유형</b>: {a["entry_type"]}
-  ├ <b>15M 수급 강도</b>: {a["volume_ratio"]:.0f}% 유입 🔥
-  ├ <b>EMA20 이격</b>: {a["ema_distance_pct"]:+.2f}%
-  └ <b>RSI / ADX</b>: {a["rsi"]:.1f} / {a["adx"]:.1f}
-────────────────────────
-💡 <i>Strategy: 1D/4H/15M MTF Confluence & {a["entry_type"]}</i>
-🔗 <a href="{tv(a["market"])}"><b>[ TradingView 차트 열기 ]</b></a>"""
-
-
-# ============================================================
-# MAIN EXECUTION
-# ============================================================
-
-def main():
-    print("=" * 60)
-    print(f" UPBIT SPOT SMART SIGNAL BOT V{VERSION}")
-    print("=" * 60)
-
-    state = get_state()
-    state["positions"] = {}
-
-    btc = btc_regime()
-    print(f'BTC: {btc["state"]} | 15M {btc["c15"]:+.2f}% | 1H {btc["c1"]:+.2f}%')
-
-    market_list = markets()
-    print("Upbit KRW markets discovered:", len(market_list))
-    if not market_list:
-        return
-
-    ticker_data = tickers(market_list)
-    candidates = [t for t in ticker_data if sf(t.get("acc_trade_price_24h")) >= MIN_24H_VALUE]
-    candidates.sort(key=lambda x: x.get("acc_trade_price_24h", 0), reverse=True)
-    candidates = candidates[:MAX_DEEP_SCAN]
-
-    print("Deep scan candidates:", len(candidates))
-
-    results = []
-    for ticker in candidates:
-        market = ticker["market"]
-
-        result = analyze(market, btc)
-        if result.get("pass"):
-            results.append(result)
-            print(f'PASS {display_name(market)} score={result["score"]} volume={result["volume_ratio"]:.0f}%')
-        else:
-            print(f'FAIL {display_name(market)} | {result.get("reason", "")}')
-
-    results.sort(key=lambda x: (x["score"], x["volume_ratio"]), reverse=True)
-    if not results:
-        print("No valid new signal.")
-        save(STATE_FILE, state)
-        return
-
-    best = results[0]
-    print(f'BEST CANDIDATE: {display_name(best["market"])} score={best["score"]}')
-
-    if not signal_allowed(state, best):
-        print("Cooldown / duplicate filter blocked signal.")
-        return
-
-    message = signal_message(best)
-    if not tg(message):
-        print("Telegram failed.")
-        log("TELEGRAM_FAILED", best)
-        return
-
-    market = best["market"]
-    state["positions"][market] = {
-        "market": market, "direction": "LONG", "entry": best["price"],
-        "sl": best["stop"], "tp1": best["tp1"], "tp2": best["tp2"], "tp3": best["tp3"],
-        "created_at": now().isoformat()
+    return {
+        "market":m,
+        "price":p,
+        "stop":stop,
+        "tp1":p+risk*1.5,
+        "tp2":p+risk*2,
+        "tp3":p+risk*3,
+        "score":score,
+        "rsi":a15["rsi"],
+        "adx":a15["adx"],
+        "vol":vol,
+        "dist":dist,
+        "regime":regime,
+        "type":"BOTTOM BOUNCE" if bounce else "BREAKOUT" if breakout else "PULLBACK",
+        "trend":trend,
+        "recovery":recovery,
+        "bounce":bounce
     }
 
-    state["sent_signal_ids"] = (state["sent_signal_ids"] + [signal_id(best)])[-500:]
-    state["last_signals"][market] = {"time": now().isoformat(), "price": best["price"], "score": best["score"]}
-    
-    save(STATE_FILE, state)
-    log("LONG_SIGNAL", best)
-    print("NEW SIGNAL SENT:", display_name(market))
+def tg(msg):
+    if not TOKEN or not CHAT:return False
+    try:
+        return S.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={
+                "chat_id":CHAT,
+                "text":msg,
+                "parse_mode":"HTML",
+                "disable_web_page_preview":True
+            },
+            timeout=15
+        ).ok
+    except:return False
 
+def reason(a):
+    r=[]
+    if a["trend"]>=3:r.append("1D·4H·1H 추세 정렬")
+    elif a["trend"]==2:r.append("상위 시간대 추세 우위")
 
-if __name__ == "__main__":
+    if a["vol"]>=180:r.append(f"거래량 {a['vol']:.0f}% 급증")
+    elif a["vol"]>=MIN_VOL:r.append(f"거래량 {a['vol']:.0f}% 증가")
+
+    if a["bounce"]:r.append("저점권 + 스토캐스틱 반전")
+    elif a["type"]=="BREAKOUT":r.append("최근 20봉 고점 돌파")
+    else:r.append("EMA20 회복형 눌림")
+
+    if a["recovery"]:r.append("상승 캔들·단기 회복 확인")
+    if a["adx"]>=18:r.append(f"ADX {a['adx']:.1f} 추세 강화")
+
+    return " · ".join(r[:4])
+
+def message(a):
+    p=a["price"]
+    s=a["stop"]
+    sl=(s/p-1)*100
+    r1=(a["tp1"]/p-1)*100
+    r2=(a["tp2"]/p-1)*100
+    r3=(a["tp3"]/p-1)*100
+
+    return f"""🚀 <b>UPBIT SPOT SIGNAL V7</b>
+━━━━━━━━━━━━━━━━
+💎 <b>{name(a['market'])}</b> <code>{a['market']}</code>
+🎯 <b>조건점수 {a['score']}/100</b> | {a['type']}
+
+💰 ENTRY <b>{fp(p)}</b>
+🛡 SL <b>{fp(s)}</b> ({sl:.2f}%)
+
+📈 <b>상승 근거</b>
+• {reason(a)}
+• RSI {a['rsi']:.1f} | ADX {a['adx']:.1f}
+• EMA20 이격 {a['dist']:+.2f}%
+• BTC Regime <b>{a['regime']}</b>
+
+🎯 <b>TARGET</b>
+TP1 {fp(a['tp1'])} (+{r1:.2f}%) · 1.5R
+TP2 {fp(a['tp2'])} (+{r2:.2f}%) · 2.0R
+TP3 {fp(a['tp3'])} (+{r3:.2f}%) · 3.0R
+
+🔄 TP1 → SL ENTRY
+🔄 TP2 → SL TP1
+🏁 TP3 → 추적 종료
+
+🔗 <a href="https://www.tradingview.com/symbols/UPBIT-{a['market'][4:]}KRW/">TradingView</a>"""
+
+def track(state):
+    if not state["positions"]:return
+
+    qs=api(
+        "/ticker",
+        {"markets":",".join(state["positions"].keys())}
+    ) or []
+
+    prices={x["market"]:float(x["trade_price"]) for x in qs}
+
+    for m,p in list(state["positions"].items()):
+        price=prices.get(m)
+        if price is None:continue
+
+        p.setdefault("stage",0)
+
+        if price>=p["tp3"]:
+            tg(
+                f"🏆 <b>TP3 도달 / 추적 종료</b>\n"
+                f"{name(m)}\n"
+                f"현재가 {fp(price)}\n"
+                f"수익률 +{(price/p['entry']-1)*100:.2f}%"
+            )
+            del state["positions"][m]
+
+        elif p["stage"]<2 and price>=p["tp2"]:
+            p["stage"]=2
+            p["sl"]=p["tp1"]
+            tg(
+                f"🟢 <b>TP2 도달</b>\n"
+                f"{name(m)}\n"
+                f"현재가 {fp(price)}\n"
+                f"SL → TP1 {fp(p['tp1'])}"
+            )
+
+        elif p["stage"]<1 and price>=p["tp1"]:
+            p["stage"]=1
+            p["sl"]=p["entry"]
+            tg(
+                f"🟢 <b>TP1 도달</b>\n"
+                f"{name(m)}\n"
+                f"현재가 {fp(price)}\n"
+                f"SL → ENTRY {fp(p['entry'])}"
+            )
+
+        elif price<=p["sl"]:
+            tg(
+                f"🔴 <b>SL 도달 / 추적 종료</b>\n"
+                f"{name(m)}\n"
+                f"현재가 {fp(price)}\n"
+                f"손익률 {(price/p['entry']-1)*100:.2f}%"
+            )
+            del state["positions"][m]
+
+def main():
+    print(f"UPBIT SPOT PROFIT TRACKING BOT V{V}")
+    init_markets()
+
+    state=load(
+        STATE,
+        {"version":V,"positions":{},"sent":[],"last":{}}
+    )
+
+    state.setdefault("positions",{})
+    state.setdefault("sent",[])
+    state.setdefault("last",{})
+
+    for p in state["positions"].values():
+        p.setdefault("stage",0)
+
+    track(state)
+
+    regime,c15,c1=btc_regime()
+    print(f"BTC {regime} | 15M {c15:+.2f}% | 1H {c1:+.2f}%")
+
+    if len(state["positions"])>=MAX_POSITIONS:
+        state["version"]=V
+        save(STATE,state)
+        return
+
+    qs=api(
+        "/ticker",
+        {"markets":",".join(NAMES.keys())}
+    ) or []
+
+    qs=[
+        x for x in qs
+        if num(x.get("acc_trade_price_24h"))>=MIN_VALUE
+    ]
+
+    qs=sorted(
+        qs,
+        key=lambda x:x.get("acc_trade_price_24h",0),
+        reverse=True
+    )[:MAX_SCAN]
+
+    results=[]
+
+    for x in qs:
+        a=analyze(x["market"],regime)
+        if a:results.append(a)
+
+    results.sort(
+        key=lambda x:(x["score"],x["vol"]),
+        reverse=True
+    )
+
+    for a in results:
+        m=a["market"]
+
+        if m in state["positions"]:
+            continue
+
+        last=state["last"].get(m)
+
+        if last:
+            try:
+                elapsed=(now()-datetime.fromisoformat(last)).total_seconds()
+                if elapsed<COOLDOWN*3600:
+                    continue
+            except:pass
+
+        sid=hashlib.sha1(
+            f"{m}|{a['price']:.6f}|{a['score']}".encode()
+        ).hexdigest()
+
+        if sid in state["sent"]:
+            continue
+
+        if tg(message(a)):
+            state["positions"][m]={
+                "entry":a["price"],
+                "sl":a["stop"],
+                "tp1":a["tp1"],
+                "tp2":a["tp2"],
+                "tp3":a["tp3"],
+                "stage":0,
+                "created":now().isoformat()
+            }
+
+            state["sent"]=(state["sent"]+[sid])[-500:]
+            state["last"][m]=now().isoformat()
+
+            print("NEW SIGNAL:",name(m),a["score"])
+            break
+
+    state["version"]=V
+    save(STATE,state)
+
+if __name__=="__main__":
     main()
