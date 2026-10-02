@@ -1,14 +1,14 @@
 import os, json, hashlib, requests, numpy as np, pandas as pd
 from datetime import datetime, timezone
 
-V = "7.2"
+V = "7.3"
 BASE = "https://api.upbit.com/v1"
 STATE = "tracked_coins.json"
 TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 MIN_VALUE = 1_000_000_000
 MAX_SCAN = 120
-MAX_POSITIONS = 9999  # 개수 제한 없이 기준에 부합하면 전부 전송
+MAX_POSITIONS = 9999  # 개수 제한 없이 기준 충족 시 전부 전송
 MIN_SCORE = 75
 WEAK_SCORE = 82
 CRASH_SCORE = 88
@@ -211,6 +211,9 @@ def analyze(m, regime):
 
     if score < threshold: return None
 
+    # 초고확률(ULTRA) 종목 판별 조건: 점수 90점 이상 + 거래량 250% 이상 + 상위 시간대 정배열 3개
+    is_ultra = (score >= 90 and vol >= 250 and trend >= 3)
+
     av = float(atr(d15).iloc[-1])
     swing = float(d15.low.iloc[-9:-1].min())
     stop = min(p - av * 1.2, swing - av * .2)
@@ -238,7 +241,8 @@ def analyze(m, regime):
         "type": "BOTTOM BOUNCE" if bounce else "BREAKOUT" if breakout else "PULLBACK",
         "trend": trend,
         "recovery": recovery,
-        "bounce": bounce
+        "bounce": bounce,
+        "is_ultra": is_ultra
     }
 
 def tg(msg):
@@ -266,8 +270,10 @@ def reason_list(a):
         reasons.append("<b>구조 회복</b>: 단기 이동평균선(EMA20) 재돌파")
 
     vol = a.get("vol", 0)
-    if vol >= 180:
-        reasons.append(f"<b>수급 강도</b>: 15M 거래량 {vol:.0f}% 급증 (평균 대비) 🔥")
+    if vol >= 250:
+        reasons.append(f"<b>수급 폭발</b>: 15M 거래량 {vol:.0f}% 압도적 유입 🔥")
+    elif vol >= 180:
+        reasons.append(f"<b>수급 강도</b>: 15M 거래량 {vol:.0f}% 급증 (평균 대비)")
     elif vol >= MIN_VOL:
         reasons.append(f"<b>수급 유입</b>: 15M 거래량 {vol:.0f}% 유입 확인")
 
@@ -289,16 +295,23 @@ def message(a):
     s = a["stop"]
     sl_pct = (s / p - 1) * 100
     tp1, tp2, tp3 = a["tp1"], a["tp2"], a["tp3"]
-    score_tag = " [MAX]" if a["score"] == 100 else ""
     stype = a.get("type", "QUANT_SIGNAL")
     
     reasons = reason_list(a)
     reason_fmt = "\n".join([f"  ├ {r}" for r in reasons[:-1]] + [f"  └ {reasons[-1]}"]) if reasons else "  └ 기술적 반등 조건 충족"
 
-    return f"""🚀 <b>[QUANT MTF CONFLUENCE SIGNAL]</b>
+    # 초고확률 시그널과 일반 시그널 헤더 구분
+    if a.get("is_ultra"):
+        header = "🔥 <b>[ULTRA HIGH-PROBABILITY SIGNAL]</b> 🔥\n🚨 <b>최상위 급등/반등 모멘텀 포착</b>"
+        tag = " 🌟 [ULTRA]"
+    else:
+        header = "🚀 <b>[QUANT MTF CONFLUENCE SIGNAL]</b>"
+        tag = " [MAX]" if a["score"] == 100 else ""
+
+    return f"""{header}
 ────────────────────────
 💎 <b>{name(a['market'])}</b> | <code>{a['market']}</code>
-🎯 <b>신호 점수</b>: {a['score']} / 100점<code>{score_tag}</code> | <b>{stype}</b>
+🎯 <b>신호 점수</b>: {a['score']} / 100점<code>{tag}</code> | <b>{stype}</b>
 ────────────────────────
 📈 <b>CORE BULLISH CATALYSTS (상승 핵심 근거)</b>
 {reason_fmt}
@@ -420,7 +433,6 @@ def main():
         reverse=True
     )
 
-    # 발견된 모든 적격 시그널을 제한 없이 전부 발송
     for a in results:
         m = a["market"]
 
@@ -454,7 +466,8 @@ def main():
             state["sent"] = (state["sent"] + [sid])[-500:]
             state["last"][m] = now().isoformat()
 
-            print("NEW SIGNAL:", name(m), a["score"])
+            tag_log = " [ULTRA]" if a.get("is_ultra") else ""
+            print("NEW SIGNAL:", name(m), a["score"], tag_log)
 
     state["version"] = V
     save(STATE, state)
