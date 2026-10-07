@@ -7,9 +7,9 @@ import pandas as pd
 from datetime import datetime, timezone
 
 # ==========================================
-# [승률 극대화(High Win-Rate) 설정]
+# [승률 극대화(High Win-Rate) & 포지션 추적 설정]
 # ==========================================
-V = "8.0"
+V = "8.1"
 BASE = "https://api.upbit.com/v1"
 STATE = "tracked_coins.json"
 
@@ -22,14 +22,14 @@ MAX_SCAN = 80               # 상위 80개 유동성 코인만 스캔
 MIN_SCORE = 85              # 최소 진입 점수 85점 이상 (A급 신호만)
 WEAK_SCORE = 90             # 하락유의장 진입 점수 90점 이상
 CRASH_SCORE = 95            # 폭락장 진입 점수 95점 이상
-COOLDOWN = 6                # 재진입 쿨다운 6시간으로 연장
+COOLDOWN = 6                # 재진입 쿨다운 6시간 연장
 
-MIN_VOL = 200               # 최소 거래량 유입 비율 200% 이상 (수급 확증)
+MIN_VOL = 200               # 최소 거래량 유입 비율 200% 이상
 MAX_EMA = 3.5               # EMA20 이격률 최대 3.5% (과열 진입 금지)
-MIN_RSI = 45                # RSI 최소 45 이상 (상승 모멘텀 구간만)
+MIN_RSI = 45                # RSI 최소 45 이상
 MAX_RSI = 70                # RSI 70 이상 과매수 구간 진입 금지
 MIN_SL = 1.0                # 최소 손절 폭 (%)
-MAX_SL = 4.5                # 최대 손절 폭 (%) -> 손절 폭을 좁혀 리스크 축소
+MAX_SL = 4.5                # 최대 손절 폭 (%)
 
 S = requests.Session()
 NAMES = {}
@@ -45,7 +45,7 @@ def load(p, d):
 
 def save(p, d):
     with open(p + ".tmp", "w", encoding="utf-8") as f:
-        json.dump(d, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump(d, f, ensure_ascii=False, separators=",:")
     os.replace(p + ".tmp", p)
 
 def num(x, d=0):
@@ -70,9 +70,13 @@ def api(path, params=None):
 
 def init_markets():
     global NAMES
+    # 거래유의 종목 스캔 제외 처리
     for x in api("/market/all", {"isDetails": "true"}) or []:
         m = x["market"]
         if m.startswith("KRW-"):
+            event = x.get("market_event", {})
+            if event.get("warning"):
+                continue
             NAMES[m] = (x.get("korean_name") or m[4:], m[4:])
 
 def name(m):
@@ -156,23 +160,18 @@ def analyze(m, regime):
     e = a15["e20"]
     dist = (p / e - 1) * 100
 
-    # 1. 과열 이격 및 RSI 조건 엄격 제한
     if dist > MAX_EMA or a15["rsi"] < MIN_RSI or a15["rsi"] > MAX_RSI:
         return None
 
-    # 2. [핵심 승률 조건] 상위 시간대(1D, 4H, 1H) 정배열 3개 완벽 충족 필수
     trend = sum(x["p"] >= x["e20"] and x["e20"] >= x["e50"] for x in (a1, a4, ad))
     if trend < 3:
-        return None  # 상위 추세가 약하면 무조건 패스
+        return None
 
     avg = float(d15.volume.iloc[-21:-1].mean())
     vol = float(d15.volume.iloc[-1] / avg * 100) if avg > 0 else 0
-    
-    # 3. 수급 검증: 15분봉 거래량 최소 200% 이상 필수
     if vol < MIN_VOL:
         return None
 
-    # 4. [속임수 위꼬리 필터] 상단 위꼬리가 너무 긴 형태 패스
     high_p = d15.high.iloc[-1]
     low_p = d15.low.iloc[-1]
     open_p = d15.open.iloc[-1]
@@ -181,7 +180,7 @@ def analyze(m, regime):
     upper_wick = high_p - max(open_p, close_p)
     
     if total_range > 0 and (upper_wick / total_range) > 0.40:
-        return None  # 매도세 강한 위꼬리 패스
+        return None
 
     prev_high = float(d15.high.iloc[-21:-1].max())
     breakout = p > prev_high
@@ -191,7 +190,6 @@ def analyze(m, regime):
     if not (breakout or pullback):
         return None
 
-    # 점수 채점 (엄격한 기준 적용)
     score = 50
     score += 15 if vol >= 300 else 10 if vol >= 200 else 0
     score += 10 if a15["rsi"] >= 50 else 0
@@ -203,7 +201,6 @@ def analyze(m, regime):
     if score < threshold:
         return None
 
-    # 타이트한 손절가 설정 (ATR 및 최근 저점 반영)
     av = float(atr(d15).iloc[-1])
     swing = float(d15.low.iloc[-9:-1].min())
     stop = max(p - av * 1.0, swing - av * 0.1)
@@ -243,38 +240,99 @@ def tg(msg):
         ).ok
     except: return False
 
-def message(a):
+def message_entry(a):
     p = a["price"]
     s = a["stop"]
     sl_pct = (s / p - 1) * 100
     tp1, tp2, tp3 = a["tp1"], a["tp2"], a["tp3"]
     stype = a.get("type", "QUANT")
 
-    return f"""🔥 <b>[HIGH WIN-RATE QUANT SIGNAL]</b>
-🚨 <b>고확률 A급 돌파/눌림목 포착</b>
-━━━━━━━━━━━━━━━━━━━━
-💎 <b>{name(a['market'])}</b> <code>({a['market']})</code>
-📌 <b>검증 점수</b>: <code>{a['score']}</code> / 100점 | <b>{stype}</b>
-━━━━━━━━━━━━━━━━━━━━
-📈 <b>승률 필터 검증 결과</b>
-  ├ <b>상위 추세</b>: 1D · 4H · 1H 전 타임프레임 완벽 정배열 (3/3)
-  ├ <b>수급 강도</b>: 15분봉 거래량 <code>{a['vol']:.0f}%</code> 강력 유입
-  └ <b>캔들 패턴</b>: 윗꼬리 저항 없는 클린 모멘텀 캔들
-━━━━━━━━━━━━━━━━━━━━
-🎯 <b>진입 및 목표 가격 (TARGETS)</b>
-  ├ <b>진입가 (ENTRY)</b> : <code>{fp(p)} 원</code>
-  ├ <b>1차 목표 (TP1)</b> : <code>{fp(tp1)} 원</code> (<b>{(tp1/p-1)*100:+.2f}%</b>) | <b>1.5R</b>
-  ├ <b>2차 목표 (TP2)</b> : <code>{fp(tp2)} 원</code> (<b>{(tp2/p-1)*100:+.2f}%</b>) | <b>2.0R</b>
-  └ <b>3차 목표 (TP3)</b> : <code>{fp(tp3)} 원</code> (<b>{(tp3/p-1)*100:+.2f}%</b>) | <b>3.0R</b>
+    return f"""🔴 🔥 <b>HIGH QUALITY ENTRY (A급 현물 진입)</b>
 
-🛡️ <b>리스크 관리 지침</b>
-  ├ <b>손절 가격 (SL)</b> : <code>{fp(s)} 원</code> (<b>{sl_pct:.2f}%</b>) ⚠️
-  └ <b>운영 수칙</b>      : TP1 달성 시 즉시 손절가를 진입가로 올릴 것!
 ━━━━━━━━━━━━━━━━━━━━
-🔗 <a href="https://www.tradingview.com/symbols/UPBIT-{a['market'].replace('KRW-', '')}KRW/"><b>[ TradingView 차트 열기 ]</b></a>"""
+🪙 <b>{name(a['market'])}</b> <code>({a['market']})</code>
+📌 <b>BUY / LONG</b> 🟢
+🏆 Quality : A
+⭐ Entry Score : {a['score']}/100 | {stype}
+━━━━━━━━━━━━━━━━━━━━
+
+💰 TRADE PLAN
+├ Entry : <code>{fp(p)} 원</code>
+├ SL : <code>{fp(s)} 원</code> (<b>{sl_pct:.2f}%</b>)
+├ TP1 : <code>{fp(tp1)} 원</code> (<b>+{(tp1/p-1)*100:.2f}%</b>) | 1.5R
+├ TP2 : <code>{fp(tp2)} 원</code> (<b>+{(tp2/p-1)*100:.2f}%</b>) | 2.0R
+└ TP3 : <code>{fp(tp3)} 원</code> (<b>+{(tp3/p-1)*100:.2f}%</b>) | 3.0R
+
+📊 MARKET
+├ RSI 15M : {a['rsi']:.1f}
+├ ADX 15M : {a['adx']:.1f}
+├ Volume : +{a['vol']:.0f}%
+└ Upper Wick Filter : 통과 (Clean Candle)
+
+⚙️ RISK MANAGEMENT
+├ TP1 달성 시 ➔ SL = ENTRY (본절가 자동 보장)
+└ TP3 달성 시 ➔ TRACKING END
+
+🔗 <a href="https://www.tradingview.com/symbols/UPBIT-{a['market'].replace('KRW-', '')}KRW/">TradingView 차트 보기</a>"""
+
+# ==========================================
+# [실시간 포지션 익절/손절 추적 엔지니어링]
+# ==========================================
+def track_positions(state):
+    positions = state.get("positions", {})
+    if not positions:
+        return
+
+    active_markets = list(positions.keys())
+    tickers = api("/ticker", {"markets": ",".join(active_markets)}) or []
+    ticker_map = {t["market"]: float(t["trade_price"]) for t in tickers}
+
+    for m in active_markets:
+        pos = positions[m]
+        curr_p = ticker_map.get(m)
+        if not curr_p:
+            continue
+
+        entry = pos["entry"]
+        sl = pos["sl"]
+        tp1, tp2, tp3 = pos["tp1"], pos["tp2"], pos["tp3"]
+
+        # 1. SL (손절) 체크
+        if curr_p <= sl:
+            pnl = (curr_p / entry - 1) * 100
+            msg = f"❌ <b>[SL TRIGGERED]</b> {name(m)}\n손절가 도달 완료: <code>{fp(curr_p)} 원</code> (수익률: <b>{pnl:.2f}%</b>)\n포지션을 정리합니다."
+            if tg(msg):
+                print(f"TG {m} SL: ok=True")
+                del state["positions"][m]
+            continue
+
+        # 2. TP1 도달 체크
+        if not pos.get("tp1_hit") and curr_p >= tp1:
+            pos["tp1_hit"] = True
+            pos["sl"] = entry # 스탑로스를 본절가로 수정 (Risk Free)
+            pnl = (curr_p / entry - 1) * 100
+            msg = f"🎯 <b>[TP1 REACHED]</b> {name(m)}\n1차 목표가 달성: <code>{fp(curr_p)} 원</code> (수익률: <b>+{pnl:.2f}%</b>)\n🛡️ <b>손절가가 진입가({fp(entry)}원)로 수정되었습니다 (본절가 방어).</b>"
+            if tg(msg):
+                print(f"TG {m} TP1: ok=True")
+
+        # 3. TP2 도달 체크
+        if pos.get("tp1_hit") and not pos.get("tp2_hit") and curr_p >= tp2:
+            pos["tp2_hit"] = True
+            pnl = (curr_p / entry - 1) * 100
+            msg = f"🎯🎯 <b>[TP2 REACHED]</b> {name(m)}\n2차 목표가 달성: <code>{fp(curr_p)} 원</code> (수익률: <b>+{pnl:.2f}%</b>)\n추가 익절을 진행하세요."
+            if tg(msg):
+                print(f"TG {m} TP2: ok=True")
+
+        # 4. TP3 (최종) 도달 체크
+        if pos.get("tp2_hit") and curr_p >= tp3:
+            pnl = (curr_p / entry - 1) * 100
+            msg = f"🚀 <b>[TP3 TARGET CLEARED]</b> {name(m)}\n최종 3차 목표가 완충: <code>{fp(curr_p)} 원</code> (수익률: <b>+{pnl:.2f}%</b>)\n포지션 추적을 종료합니다."
+            if tg(msg):
+                print(f"TG {m} TP3 CLEAR: ok=True")
+                del state["positions"][m]
 
 def main():
-    print(f"HIGH WIN-RATE BOT V{V} SCANNING...")
+    print(f"UPBIT SPOT FINAL ENTRY BOT V{V} STARTED...")
     init_markets()
 
     state = load(STATE, {"version": V, "positions": {}, "sent": [], "last": {}})
@@ -282,8 +340,12 @@ def main():
     state.setdefault("sent", [])
     state.setdefault("last", {})
 
+    # 1. 기존 포지션 익절/손절 실시간 추적
+    track_positions(state)
+
+    # 2. 시장 레짐 및 신규 마켓 스캔
     regime, c15, c1 = btc_regime()
-    print(f"BTC Regime: {regime} | 15M: {c15:+.2f}%")
+    print(f"BTC Regime: {regime} | 15M: {c15:+.2f}% | 1H: {c1:+.2f}%")
 
     qs = api("/ticker", {"markets": ",".join(NAMES.keys())}) or []
     qs = [x for x in qs if num(x.get("acc_trade_price_24h")) >= MIN_VALUE]
@@ -293,22 +355,49 @@ def main():
     results = [a for a in results if a is not None]
     results.sort(key=lambda x: (x["score"], x["vol"]), reverse=True)
 
+    final_signals = 0
     for a in results:
         m = a["market"]
+        
+        # 이미 추적 중인 포지션 스킵
+        if m in state["positions"]:
+            print(f"SKIP ACTIVE: {m}")
+            continue
+
+        # 쿨다운 스킵
         last = state["last"].get(m)
         if last:
             try:
                 if (now() - datetime.fromisoformat(last)).total_seconds() < COOLDOWN * 3600:
+                    print(f"SKIP COOLDOWN: {m}")
                     continue
             except: pass
 
         sid = hashlib.sha1(f"{m}|{a['price']:.6f}|{a['score']}".encode()).hexdigest()
         if sid in state["sent"]: continue
 
-        if tg(message(a)):
+        if tg(message_entry(a)):
             state["sent"] = (state["sent"] + [sid])[-500:]
             state["last"][m] = now().isoformat()
-            print(f"✅ [A급 포착] {name(m)} | 점수: {a['score']} | 거래량: {a['vol']:.0f}%")
+            
+            # 신규 포지션 추적 등록
+            state["positions"][m] = {
+                "entry": a["price"],
+                "sl": a["stop"],
+                "tp1": a["tp1"],
+                "tp2": a["tp2"],
+                "tp3": a["tp3"],
+                "tp1_hit": False,
+                "tp2_hit": False,
+                "time": now().isoformat()
+            }
+            final_signals += 1
+            print(f"TG {m} BUY A: http=200 ok=True")
+            print(f"SIGNAL SENT: {m} A {a['score']}")
+
+    print(f"FINAL SIGNALS: {final_signals}")
+    print(f"ACTIVE POSITIONS: {len(state['positions'])}")
+    print("DONE")
 
     state["version"] = V
     save(STATE, state)
