@@ -2,8 +2,7 @@ import os
 import json
 import time
 import requests
-import pandas as pd
-import ta
+import math
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
@@ -13,7 +12,6 @@ TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or "").strip()
 
 STATE_FILE = "bot_state.json"
-TRACKED_FILE = "tracked_coins.json"
 MAX_POSITIONS = 15
 KST = timezone(timedelta(hours=9))
 
@@ -70,6 +68,45 @@ def format_price(price):
         return f"{price:.4f}"
 
 # ==========================================
+# 지표 자체 계산 함수 (Pandas/TA 라이브러리 미사용)
+# ==========================================
+def calc_ema(prices, period):
+    if len(prices) < period:
+        return [prices[-1]] * len(prices)
+    k = 2 / (period + 1)
+    ema = [prices[0]]
+    for p in prices[1:]:
+        ema.append((p * k) + (ema[-1] * (1 - k)))
+    return ema
+
+def calc_rsi(closes, period=14):
+    if len(closes) < period + 1:
+        return 50.0
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        diff = closes[i] - closes[i-1]
+        gains.append(max(diff, 0))
+        losses.append(max(-diff, 0))
+    
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
+
+def calc_atr(highs, lows, closes, period=14):
+    if len(closes) < period + 1:
+        return closes[-1] * 0.02
+    tr_list = []
+    for i in range(1, len(closes)):
+        h, l, pc = highs[i], lows[i], closes[i-1]
+        tr = max(h - l, abs(h - pc), abs(l - pc))
+        tr_list.append(tr)
+    return sum(tr_list[-period:]) / period
+
+# ==========================================
 # 업비트 API 데이터 수집
 # ==========================================
 def get_krw_markets():
@@ -83,62 +120,53 @@ def get_krw_markets():
         print("⚠️ 마켓 목록 수집 에러:", e)
     return ["KRW-BTC", "KRW-ETH", "KRW-SOL", "KRW-XRP", "KRW-DOGE", "KRW-ADA", "KRW-AVAX", "KRW-SEI"]
 
-def fetch_candles(market, unit="15", count=100):
+def fetch_candles(market, unit="15", count=80):
     try:
         url = f"https://api.upbit.com/v1/candles/minutes/{unit}?market={market}&count={count}"
         res = requests.get(url, headers=HEADERS, timeout=5)
         if res.status_code == 200:
             data = res.json()
-            df = pd.DataFrame(data)
-            df = df.rename(columns={
-                'trade_price': 'close',
-                'high_price': 'high',
-                'low_price': 'low',
-                'opening_price': 'open',
-                'candle_acc_trade_volume': 'volume'
-            })
-            df = df.iloc[::-1].reset_index(drop=True)
-            for col in ['close', 'high', 'low', 'open', 'volume']:
-                df[col] = df[col].astype(float)
-            return df
+            data.reverse() # 과거 -> 최신 정렬
+            closes = [float(x['trade_price']) for x in data]
+            highs = [float(x['high_price']) for x in data]
+            lows = [float(x['low_price']) for x in data]
+            return closes, highs, lows
     except Exception:
         pass
-    return pd.DataFrame()
+    return [], [], []
 
-# 비트코인 시장 추세 판단
 def get_btc_regime():
-    df = fetch_candles("KRW-BTC", unit="15", count=50)
-    if df.empty:
+    closes, _, _ = fetch_candles("KRW-BTC", unit="15", count=60)
+    if not closes or len(closes) < 50:
         return "NEUTRAL"
     
-    close = df.iloc[-1]['close']
-    ema20 = ta.trend.ema_indicator(df['close'], window=20).iloc[-1]
-    ema50 = ta.trend.ema_indicator(df['close'], window=50).iloc[-1]
+    price = closes[-1]
+    ema20 = calc_ema(closes, 20)[-1]
+    ema50 = calc_ema(closes, 50)[-1]
 
-    if close > ema20 > ema50:
+    if price > ema20 > ema50:
         return "BULLISH"
-    elif close < ema20 < ema50:
+    elif price < ema20 < ema50:
         return "BEARISH"
     else:
         return "NEUTRAL"
 
-def analyze_market(df):
-    if len(df) < 50:
+def analyze_market(closes, highs, lows):
+    if len(closes) < 50:
         return None
 
-    df['ema20'] = ta.trend.ema_indicator(df['close'], window=20)
-    df['ema50'] = ta.trend.ema_indicator(df['close'], window=50)
-    df['rsi'] = ta.momentum.rsi(df['close'], window=14)
-    df['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=14)
+    ema20_list = calc_ema(closes, 20)
+    ema50_list = calc_ema(closes, 50)
     
-    latest = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    price = latest['close']
-    ema20 = latest['ema20']
-    ema50 = latest['ema50']
-    rsi = latest['rsi']
-    atr = latest['atr']
+    price = closes[-1]
+    prev_price = closes[-2]
+    
+    ema20 = ema20_list[-1]
+    ema50 = ema50_list[-1]
+    
+    rsi = calc_rsi(closes, 14)
+    prev_rsi = calc_rsi(closes[:-1], 14)
+    atr = calc_atr(highs, lows, closes, 14)
 
     score = 0
     reasons = []
@@ -149,7 +177,7 @@ def analyze_market(df):
     if ema20 > ema50:
         score += 3
         reasons.append("EMA20 > EMA50 정배열")
-    if prev['rsi'] <= 48 and rsi > prev['rsi']:
+    if prev_rsi <= 48 and rsi > prev_rsi:
         score += 2
         reasons.append(f"RSI 반등 ({rsi:.1f})")
     elif 50 <= rsi <= 68:
@@ -157,12 +185,11 @@ def analyze_market(df):
         reasons.append(f"RSI 모멘텀 ({rsi:.1f})")
 
     if score >= 6:
-        # ATR 변동성에 맞춰 동적 리스크 산정 (최소 2.5% ~ 5.0% 리스크 폭 설정)
+        # ATR 기반 동적 리스크 설정 (최소 2.5% ~ 5.0% 리스크 폭)
         risk_pct = max((atr / price) * 100 * 1.5, 2.5)
         risk_amount = price * (risk_pct / 100)
 
         sl = price - risk_amount
-        # TP1: 리스크의 2.0배 (약 +5% ~ +8%), TP2: 리스크의 4.0배 (약 +10% ~ +20%)
         tp1 = price + (risk_amount * 2.0)
         tp2 = price + (risk_amount * 4.0)
 
@@ -186,7 +213,7 @@ def analyze_market(df):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V8.3 STARTED...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V8.4 STARTED...")
     print("=" * 55)
 
     btc_regime = get_btc_regime()
@@ -205,11 +232,11 @@ def main():
         if coin_symbol in positions:
             continue
 
-        df = fetch_candles(market, unit="15")
-        if df.empty:
+        closes, highs, lows = fetch_candles(market, unit="15")
+        if not closes:
             continue
 
-        result = analyze_market(df)
+        result = analyze_market(closes, highs, lows)
         if result:
             new_signals += 1
             price = result["price"]
