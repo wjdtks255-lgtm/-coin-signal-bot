@@ -2,7 +2,6 @@ import os
 import json
 import time
 import requests
-import math
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
@@ -68,7 +67,7 @@ def format_price(price):
         return f"{price:.4f}"
 
 # ==========================================
-# 지표 자체 계산 함수 (Pandas/TA 라이브러리 미사용)
+# 지표 자체 계산 함수
 # ==========================================
 def calc_ema(prices, period):
     if len(prices) < period:
@@ -118,7 +117,7 @@ def get_krw_markets():
             return sorted(markets)
     except Exception as e:
         print("⚠️ 마켓 목록 수집 에러:", e)
-    return ["KRW-BTC", "KRW-ETH", "KRW-SOL", "KRW-XRP", "KRW-DOGE", "KRW-ADA", "KRW-AVAX", "KRW-SEI"]
+    return ["KRW-BTC", "KRW-ETH", "KRW-SOL", "KRW-XRP"]
 
 def fetch_candles(market, unit="15", count=80):
     try:
@@ -126,7 +125,7 @@ def fetch_candles(market, unit="15", count=80):
         res = requests.get(url, headers=HEADERS, timeout=5)
         if res.status_code == 200:
             data = res.json()
-            data.reverse() # 과거 -> 최신 정렬
+            data.reverse()
             closes = [float(x['trade_price']) for x in data]
             highs = [float(x['high_price']) for x in data]
             lows = [float(x['low_price']) for x in data]
@@ -134,6 +133,17 @@ def fetch_candles(market, unit="15", count=80):
     except Exception:
         pass
     return [], [], []
+
+def get_current_prices(markets):
+    try:
+        url = f"https://api.upbit.com/v1/ticker?markets={','.join(markets)}"
+        res = requests.get(url, headers=HEADERS, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            return {item['market']: float(item['trade_price']) for item in data}
+    except Exception:
+        pass
+    return {}
 
 def get_btc_regime():
     closes, _, _ = fetch_candles("KRW-BTC", unit="15", count=60)
@@ -159,8 +169,6 @@ def analyze_market(closes, highs, lows):
     ema50_list = calc_ema(closes, 50)
     
     price = closes[-1]
-    prev_price = closes[-2]
-    
     ema20 = ema20_list[-1]
     ema50 = ema50_list[-1]
     
@@ -185,7 +193,6 @@ def analyze_market(closes, highs, lows):
         reasons.append(f"RSI 모멘텀 ({rsi:.1f})")
 
     if score >= 6:
-        # ATR 기반 동적 리스크 설정 (최소 2.5% ~ 5.0% 리스크 폭)
         risk_pct = max((atr / price) * 100 * 1.5, 2.5)
         risk_amount = price * (risk_pct / 100)
 
@@ -193,42 +200,113 @@ def analyze_market(closes, highs, lows):
         tp1 = price + (risk_amount * 2.0)
         tp2 = price + (risk_amount * 4.0)
 
-        tp1_pct = ((tp1 - price) / price) * 100
-        tp2_pct = ((tp2 - price) / price) * 100
-        sl_pct = ((sl - price) / price) * 100
-
         return {
-            "price": price,
-            "sl": sl,
-            "tp1": tp1,
-            "tp2": tp2,
-            "tp1_pct": tp1_pct,
-            "tp2_pct": tp2_pct,
-            "sl_pct": sl_pct,
-            "rsi": rsi,
-            "score": score,
-            "reasons": reasons
+            "price": price, "sl": sl, "tp1": tp1, "tp2": tp2,
+            "tp1_pct": ((tp1 - price) / price) * 100,
+            "tp2_pct": ((tp2 - price) / price) * 100,
+            "sl_pct": ((sl - price) / price) * 100,
+            "rsi": rsi, "score": score, "reasons": reasons
         }
     return None
 
+def monitor_positions(positions):
+    if not positions:
+        return positions
+
+    market_list = [f"KRW-{coin}" for coin in positions.keys()]
+    current_prices = get_current_prices(market_list)
+    updated_positions = {}
+
+    for coin, info in positions.items():
+        market = f"KRW-{coin}"
+        cur_price = current_prices.get(market)
+        if not cur_price:
+            updated_positions[coin] = info
+            continue
+
+        entry = info["entry"]
+        sl = info["sl"]
+        tp1 = info["tp1"]
+        tp2 = info["tp2"]
+        upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
+
+        # 1. 손절(SL) 도달
+        if cur_price <= sl:
+            loss_pct = ((cur_price - entry) / entry) * 100
+            msg = (
+                f"🛡 <b>[코인 현물] 손절가(SL) 도달 청산</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>종목명</b> : <code>#{coin}</code>\n"
+                f"• <b>진입가</b> : ₩{format_price(entry)}\n"
+                f"• <b>청산가</b> : <b>₩{format_price(cur_price)}</b> ({loss_pct:.1f}%)\n"
+                f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
+                f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
+            )
+            telegram(msg)
+            print(f"🛡 SL 도달 청산: #{coin}")
+            continue # 포지션 제거
+
+        # 2. 2차 목표가(TP2) 도달 (최종 익절)
+        elif cur_price >= tp2:
+            profit_pct = ((cur_price - entry) / entry) * 100
+            msg = (
+                f"🏆 <b>[코인 현물] 2차 목표가(TP2) 도달 달성! (WIN)</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>종목명</b> : <code>#{coin}</code>\n"
+                f"• <b>진입가</b> : ₩{format_price(entry)}\n"
+                f"• <b>최종 익절가</b> : <b>₩{format_price(cur_price)}</b> (<b>+{profit_pct:.1f}%</b>)\n"
+                f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
+                f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
+            )
+            telegram(msg)
+            print(f"🏆 TP2 달성 청산: #{coin}")
+            continue # 포지션 제거
+
+        # 3. 1차 목표가(TP1) 도달
+        elif cur_price >= tp1 and not info.get("tp1_hit", False):
+            profit_pct = ((cur_price - entry) / entry) * 100
+            msg = (
+                f"🎯 <b>[코인 현물] 1차 목표가(TP1) 도달 성공!</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>종목명</b> : <code>#{coin}</code>\n"
+                f"• <b>현재가</b> : ₩{format_price(cur_price)} (+{profit_pct:.1f}%)\n"
+                f"🛡 <i>안전을 위해 손절가를 진입가(본전)로 상향하세요!</i>\n"
+                f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
+                f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
+            )
+            telegram(msg)
+            info["tp1_hit"] = True
+
+        updated_positions[coin] = info
+
+    return updated_positions
+
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V8.4 STARTED...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V8.5 STARTED...")
     print("=" * 55)
 
-    btc_regime = get_btc_regime()
-
     state = load_json(STATE_FILE, {"positions": {}, "signals": {}})
-    positions = state.get("positions", {})
+    
+    # 1. 기존 보유 포지션 실시간 가격 감시 (익절/손절 체크)
+    print("👀 기존 보유 포지션 모니터링 중...")
+    positions = monitor_positions(state.get("positions", {}))
+    state["positions"] = positions
+    save_json(STATE_FILE, state)
 
+    if len(positions) >= MAX_POSITIONS:
+        print(f"⚠️ 최대 포지션 한도 도달 ({len(positions)}/{MAX_POSITIONS}). 신규 스킵.")
+        return
+
+    # 2. 신규 시그널 스캔
+    btc_regime = get_btc_regime()
     markets = get_krw_markets()
-    print(f"🔍 업비트 현물 전 종목 스캔 중... (현재 보유 포지션: {len(positions)}/{MAX_POSITIONS})")
+    print(f"🔍 업비트 현물 전 종목 신규 스캔 중... (현재 보유: {len(positions)}/{MAX_POSITIONS})")
 
     new_signals = 0
 
     for market in markets:
         coin_symbol = market.replace("KRW-", "")
-        
         if coin_symbol in positions:
             continue
 
@@ -244,8 +322,7 @@ def main():
             tp1 = result["tp1"]
             tp2 = result["tp2"]
 
-            tv_symbol = f"UPBIT:{coin_symbol}KRW"
-            tv_link = f"https://www.tradingview.com/chart/?symbol={tv_symbol}"
+            upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin_symbol}"
 
             msg = (
                 f"🟢 <b>[코인 현물] 신규 매수 시그널</b>\n"
@@ -260,7 +337,7 @@ def main():
                 f"🛡 <b>손절가 (SL)</b> : <code>₩{format_price(sl)}</code> ({result['sl_pct']:.1f}%)\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"⚙️ <b>포착 조건</b> : {', '.join(result['reasons'])}\n"
-                f"📈 <a href=\"{tv_link}\"><b>[업비트 차트 열기]</b></a>\n"
+                f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 바로가기]</b></a>\n"
                 f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
             )
 
@@ -268,13 +345,13 @@ def main():
             print(f"🎯 시그널 포착! #{coin_symbol} -> 전송 완료")
 
             positions[coin_symbol] = {
-                "entry": price,
-                "sl": sl,
-                "tp1": tp1,
-                "tp2": tp2,
-                "time": now().strftime("%Y-%m-%d %H:%M:%S")
+                "entry": price, "sl": sl, "tp1": tp1, "tp2": tp2,
+                "tp1_hit": False, "time": now().strftime("%Y-%m-%d %H:%M:%S")
             }
             time.sleep(1)
+
+            if len(positions) >= MAX_POSITIONS:
+                break
 
     state["positions"] = positions
     save_json(STATE_FILE, state)
