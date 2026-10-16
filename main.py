@@ -173,6 +173,30 @@ def get_btc_regime():
     else:
         return "NEUTRAL"
 
+def check_btc_regime_shift(current_regime, state):
+    """💡 비트코인 시황(추세)에 변화가 생겼을 때만 긴급 알림 전송"""
+    prev_regime = state.get("btc_regime", "NEUTRAL")
+    
+    if current_regime != prev_regime:
+        emoji_map = {
+            "BULLISH": "🚀 (상승세 시작 / 강세장 진입)",
+            "BEARISH": "⚠️ (하락세 시작 / 약세장 진입)",
+            "NEUTRAL": "⚖️ (횡보장 / 혼조세 전환)"
+        }
+        
+        msg = (
+            f"🚨 <b>[시황 긴급 알림] 비트코인 추세 전환 포착!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>이전 추세</b> : <code>{prev_regime}</code>\n"
+            f"• <b>현재 추세</b> : <b>{current_regime}</b> {emoji_map.get(current_regime, '')}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
+        )
+        telegram(msg)
+        print(f"🚨 비트코인 시황 변동 감지: {prev_regime} -> {current_regime}")
+        
+    state["btc_regime"] = current_regime
+
 # ==========================================
 # 시장 분석 및 시그널 산출
 # ==========================================
@@ -192,7 +216,6 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
     atr = calc_atr(highs, lows, closes, 14)
     bb_upper, bb_lower = calc_bollinger_bands(closes, 20, 2)
 
-    # 거래량 분석 (최근 거래량 vs 직전 20봉 평균 거래량)
     cur_volume = volumes[-1]
     avg_volume = sum(volumes[-21:-1]) / 20 if len(volumes) >= 21 else sum(volumes) / len(volumes)
     vol_ratio = (cur_volume / avg_volume) if avg_volume > 0 else 1.0
@@ -200,7 +223,6 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
     score = 0
     reasons = []
 
-    # 1. 이동평균선 조건
     if price > ema20:
         score += 2
         reasons.append("EMA20 상회")
@@ -208,7 +230,6 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         score += 2
         reasons.append("EMA20 > EMA50 정배열")
 
-    # 2. RSI 조건
     if prev_rsi <= 48 and rsi > prev_rsi:
         score += 2
         reasons.append(f"RSI 반등 ({rsi:.1f})")
@@ -216,7 +237,6 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         score += 2
         reasons.append(f"RSI 모멘텀 ({rsi:.1f})")
 
-    # 3. 거래량 급증 조건 (수급 유입)
     if vol_ratio >= 2.0:
         score += 3
         reasons.append(f"거래량 폭발 ({vol_ratio:.1f}배)")
@@ -224,17 +244,15 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         score += 2
         reasons.append(f"거래량 증가 ({vol_ratio:.1f}배)")
 
-    # 4. 볼린저 밴드 상단 돌파 조건
     if price >= bb_upper:
         score += 2
         reasons.append("볼린저 밴드 상단 돌파")
 
-    # BTC 레짐별 필요 진입 점수 문턱 설정 (하락장일 때도 9점 이상이면 역주행 허용)
     min_required_score = 6
     if btc_regime == "NEUTRAL":
         min_required_score = 8
     elif btc_regime == "BEARISH":
-        min_required_score = 9  # 💡 하락장에서도 완벽한 조건(9점 이상)을 갖춘 초강세 코인만 허용
+        min_required_score = 9  # 하락장에서는 9점 이상 초강세 역주행만 허용
 
     if score >= min_required_score:
         risk_pct = max((atr / price) * 100 * 1.5, 2.5)
@@ -290,7 +308,7 @@ def monitor_positions(positions):
             print(f"🛡 SL 도달 청산: #{coin}")
             continue
 
-        # 2. 2차 목표가(TP2) 도달 (최종 익절)
+        # 2. 2차 목표가(TP2) 도달
         elif cur_price >= tp2:
             profit_pct = ((cur_price - entry) / entry) * 100
             msg = (
@@ -325,25 +343,67 @@ def monitor_positions(positions):
 
     return updated_positions
 
+def send_hourly_briefing(positions):
+    """💡 1시간마다 현재 보유 포지션 현황과 수익률 요약 전송"""
+    if not positions:
+        return
+
+    market_list = [f"KRW-{coin}" for coin in positions.keys()]
+    current_prices = get_current_prices(market_list)
+
+    msg = (
+        f"📊 <b>[코인 현물] 정기 보유 포지션 브리핑 (1시간)</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>현재 보유 슬롯</b> : <b>{len(positions)} / {MAX_POSITIONS}개</b>\n"
+    )
+
+    for coin, info in positions.items():
+        market = f"KRW-{coin}"
+        cur_price = current_prices.get(market, info["entry"])
+        entry = info["entry"]
+        profit_pct = ((cur_price - entry) / entry) * 100
+        sign = "+" if profit_pct > 0 else ""
+        
+        emoji = "🟢" if profit_pct >= 0 else "🔴"
+        upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
+
+        msg += (
+            f"\n{emoji} <a href=\"{upbit_link}\"><b>#{coin}</b></a>\n"
+            f"  • 진입: ₩{format_price(entry)} | 현재: ₩{format_price(cur_price)}\n"
+            f"  • 수익률: <b>{sign}{profit_pct:.1f}%</b> (TP1: {'달성' if info.get('tp1_hit') else '미달성'})\n"
+        )
+
+    msg += (
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
+    )
+    telegram(msg)
+
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V9.1 STARTED...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V9.3 STARTED...")
     print("=" * 55)
 
-    state = load_json(STATE_FILE, {"positions": {}, "signals": {}})
+    state = load_json(STATE_FILE, {"positions": {}, "btc_regime": "NEUTRAL"})
     
+    # 💡 비트코인 시황 파악 및 추세 전환 긴급 체크
+    btc_regime = get_btc_regime()
+    check_btc_regime_shift(btc_regime, state)
+
     # 1. 기존 보유 포지션 모니터링
     print("👀 기존 보유 포지션 모니터링 중...")
     positions = monitor_positions(state.get("positions", {}))
     state["positions"] = positions
     save_json(STATE_FILE, state)
 
+    # 💡 1시간 정기 보유 포지션 브리핑 전송
+    send_hourly_briefing(positions)
+
     if len(positions) >= MAX_POSITIONS:
         print(f"⚠️ 최대 포지션 한도 도달 ({len(positions)}/{MAX_POSITIONS}). 신규 스킵.")
         return
 
     # 2. 신규 시그널 스캔
-    btc_regime = get_btc_regime()
     markets = get_krw_markets()
     print(f"🔍 업비트 현물 전 종목 스캔 중... (BTC 추세: {btc_regime} | 보유: {len(positions)}/{MAX_POSITIONS})")
 
