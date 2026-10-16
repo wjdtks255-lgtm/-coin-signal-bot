@@ -229,12 +229,12 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         score += 2
         reasons.append("볼린저 밴드 상단 돌파")
 
-    # BTC 레짐별 필요 진입 점수 문턱 설정
+    # BTC 레짐별 필요 진입 점수 문턱 설정 (하락장일 때도 9점 이상이면 역주행 허용)
     min_required_score = 6
     if btc_regime == "NEUTRAL":
-        min_required_score = 8  # 혼조세일 때는 기준 강화
+        min_required_score = 8
     elif btc_regime == "BEARISH":
-        min_required_score = 99 # 하락장에서는 신규 매수 차단
+        min_required_score = 9  # 💡 하락장에서도 완벽한 조건(9점 이상)을 갖춘 초강세 코인만 허용
 
     if score >= min_required_score:
         risk_pct = max((atr / price) * 100 * 1.5, 2.5)
@@ -327,7 +327,7 @@ def monitor_positions(positions):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V9.0 STARTED...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V9.1 STARTED...")
     print("=" * 55)
 
     state = load_json(STATE_FILE, {"positions": {}, "signals": {}})
@@ -346,10 +346,6 @@ def main():
     btc_regime = get_btc_regime()
     markets = get_krw_markets()
     print(f"🔍 업비트 현물 전 종목 스캔 중... (BTC 추세: {btc_regime} | 보유: {len(positions)}/{MAX_POSITIONS})")
-
-    if btc_regime == "BEARISH":
-        print("⛔ BTC 하락장(BEARISH) 감지로 신규 매수 시그널 작성을 중단합니다.")
-        return
 
     new_signals = 0
 
@@ -373,7 +369,7 @@ def main():
             upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin_symbol}"
 
             msg = (
-                f"🟢 <b>[코인 현물] 신규 매수 시그널</b>\n"
+                f"🟢 <b>[코인 현물] 신규 매수 시그널 (점수: {result['score']}점)</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>종목명</b> : <code>#{coin_symbol}</code> (KRW 마켓)\n"
                 f"• <b>시장 추세</b> : <code>BTC {btc_regime}</code>\n"
