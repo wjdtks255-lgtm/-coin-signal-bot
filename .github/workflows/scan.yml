@@ -2,7 +2,7 @@ name: Upbit Spot Profit Tracking Bot
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # 15분마다 실행 (원하시는 주기로 변경 가능)
+    - cron: '*/15 * * * *' # 15분마다 실행
   workflow_dispatch: # GitHub 웹에서 수동 실행 버튼 제공
 
 jobs:
