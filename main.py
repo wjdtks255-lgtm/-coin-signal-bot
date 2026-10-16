@@ -105,6 +105,17 @@ def calc_atr(highs, lows, closes, period=14):
         tr_list.append(tr)
     return sum(tr_list[-period:]) / period
 
+def calc_bollinger_bands(closes, period=20, std_dev=2):
+    if len(closes) < period:
+        return closes[-1], closes[-1]
+    slice_closes = closes[-period:]
+    sma = sum(slice_closes) / period
+    variance = sum((x - sma) ** 2 for x in slice_closes) / period
+    std = variance ** 0.5
+    upper = sma + (std * std_dev)
+    lower = sma - (std * std_dev)
+    return upper, lower
+
 # ==========================================
 # 업비트 API 데이터 수집
 # ==========================================
@@ -129,10 +140,11 @@ def fetch_candles(market, unit="15", count=80):
             closes = [float(x['trade_price']) for x in data]
             highs = [float(x['high_price']) for x in data]
             lows = [float(x['low_price']) for x in data]
-            return closes, highs, lows
+            volumes = [float(x['candle_acc_trade_volume']) for x in data]
+            return closes, highs, lows, volumes
     except Exception:
         pass
-    return [], [], []
+    return [], [], [], []
 
 def get_current_prices(markets):
     try:
@@ -146,7 +158,7 @@ def get_current_prices(markets):
     return {}
 
 def get_btc_regime():
-    closes, _, _ = fetch_candles("KRW-BTC", unit="15", count=60)
+    closes, _, _, _ = fetch_candles("KRW-BTC", unit="15", count=60)
     if not closes or len(closes) < 50:
         return "NEUTRAL"
     
@@ -161,8 +173,11 @@ def get_btc_regime():
     else:
         return "NEUTRAL"
 
-def analyze_market(closes, highs, lows):
-    if len(closes) < 50:
+# ==========================================
+# 시장 분석 및 시그널 산출
+# ==========================================
+def analyze_market(closes, highs, lows, volumes, btc_regime):
+    if len(closes) < 50 or len(volumes) < 20:
         return None
 
     ema20_list = calc_ema(closes, 20)
@@ -175,16 +190,25 @@ def analyze_market(closes, highs, lows):
     rsi = calc_rsi(closes, 14)
     prev_rsi = calc_rsi(closes[:-1], 14)
     atr = calc_atr(highs, lows, closes, 14)
+    bb_upper, bb_lower = calc_bollinger_bands(closes, 20, 2)
+
+    # 거래량 분석 (최근 거래량 vs 직전 20봉 평균 거래량)
+    cur_volume = volumes[-1]
+    avg_volume = sum(volumes[-21:-1]) / 20 if len(volumes) >= 21 else sum(volumes) / len(volumes)
+    vol_ratio = (cur_volume / avg_volume) if avg_volume > 0 else 1.0
 
     score = 0
     reasons = []
 
+    # 1. 이동평균선 조건
     if price > ema20:
-        score += 3
+        score += 2
         reasons.append("EMA20 상회")
     if ema20 > ema50:
-        score += 3
+        score += 2
         reasons.append("EMA20 > EMA50 정배열")
+
+    # 2. RSI 조건
     if prev_rsi <= 48 and rsi > prev_rsi:
         score += 2
         reasons.append(f"RSI 반등 ({rsi:.1f})")
@@ -192,7 +216,27 @@ def analyze_market(closes, highs, lows):
         score += 2
         reasons.append(f"RSI 모멘텀 ({rsi:.1f})")
 
-    if score >= 6:
+    # 3. 거래량 급증 조건 (수급 유입)
+    if vol_ratio >= 2.0:
+        score += 3
+        reasons.append(f"거래량 폭발 ({vol_ratio:.1f}배)")
+    elif vol_ratio >= 1.5:
+        score += 2
+        reasons.append(f"거래량 증가 ({vol_ratio:.1f}배)")
+
+    # 4. 볼린저 밴드 상단 돌파 조건
+    if price >= bb_upper:
+        score += 2
+        reasons.append("볼린저 밴드 상단 돌파")
+
+    # BTC 레짐별 필요 진입 점수 문턱 설정
+    min_required_score = 6
+    if btc_regime == "NEUTRAL":
+        min_required_score = 8  # 혼조세일 때는 기준 강화
+    elif btc_regime == "BEARISH":
+        min_required_score = 99 # 하락장에서는 신규 매수 차단
+
+    if score >= min_required_score:
         risk_pct = max((atr / price) * 100 * 1.5, 2.5)
         risk_amount = price * (risk_pct / 100)
 
@@ -244,7 +288,7 @@ def monitor_positions(positions):
             )
             telegram(msg)
             print(f"🛡 SL 도달 청산: #{coin}")
-            continue # 포지션 제거 (updated_positions에 담지 않음)
+            continue
 
         # 2. 2차 목표가(TP2) 도달 (최종 익절)
         elif cur_price >= tp2:
@@ -260,7 +304,7 @@ def monitor_positions(positions):
             )
             telegram(msg)
             print(f"🏆 TP2 달성 청산: #{coin}")
-            continue # 포지션 제거 (updated_positions에 담지 않음)
+            continue
 
         # 3. 1차 목표가(TP1) 도달
         elif cur_price >= tp1 and not info.get("tp1_hit", False):
@@ -283,12 +327,12 @@ def monitor_positions(positions):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V8.5 STARTED...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V9.0 STARTED...")
     print("=" * 55)
 
     state = load_json(STATE_FILE, {"positions": {}, "signals": {}})
     
-    # 1. 기존 보유 포지션 실시간 가격 감시 (익절/손절 체크)
+    # 1. 기존 보유 포지션 모니터링
     print("👀 기존 보유 포지션 모니터링 중...")
     positions = monitor_positions(state.get("positions", {}))
     state["positions"] = positions
@@ -301,7 +345,11 @@ def main():
     # 2. 신규 시그널 스캔
     btc_regime = get_btc_regime()
     markets = get_krw_markets()
-    print(f"🔍 업비트 현물 전 종목 신규 스캔 중... (현재 보유: {len(positions)}/{MAX_POSITIONS})")
+    print(f"🔍 업비트 현물 전 종목 스캔 중... (BTC 추세: {btc_regime} | 보유: {len(positions)}/{MAX_POSITIONS})")
+
+    if btc_regime == "BEARISH":
+        print("⛔ BTC 하락장(BEARISH) 감지로 신규 매수 시그널 작성을 중단합니다.")
+        return
 
     new_signals = 0
 
@@ -310,11 +358,11 @@ def main():
         if coin_symbol in positions:
             continue
 
-        closes, highs, lows = fetch_candles(market, unit="15")
+        closes, highs, lows, volumes = fetch_candles(market, unit="15")
         if not closes:
             continue
 
-        result = analyze_market(closes, highs, lows)
+        result = analyze_market(closes, highs, lows, volumes, btc_regime)
         if result:
             new_signals += 1
             price = result["price"]
