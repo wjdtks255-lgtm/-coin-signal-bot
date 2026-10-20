@@ -2,7 +2,7 @@ name: Upbit Spot Profit Tracking Bot
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # 15분마다 실행
+    - cron: '*/5 * * * *' # 💡 5분마다 실행되도록 변경 완료
   workflow_dispatch: # GitHub 웹에서 수동 실행 버튼 제공
 
 jobs:
@@ -30,7 +30,7 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py  # 💡 main.py 실행
+        run: python main.py # 💡 main.py 실행
 
       # 💡 포지션 상태 파일 변경분을 리포지토리에 자동 저장
       - name: Save State and Commit
