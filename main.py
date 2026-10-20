@@ -274,7 +274,7 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
     return None
 
 # ==========================================
-# 💡 [개편] 3단계 성과 집계 포지션 감시 로직
+# 3단계 성과 집계 포지션 감시 로직
 # ==========================================
 def monitor_positions(positions, stats):
     if not positions:
@@ -303,7 +303,7 @@ def monitor_positions(positions, stats):
         if cur_price <= sl:
             pnl_pct = ((cur_price - entry) / entry) * 100
             
-            # 💡 [핵심] TP1 도달 후 본전/상향 SL 스탑 발동 시 -> Breakeven (무승부/방어) 처리
+            # TP1 도달 후 본전/상향 SL 스탑 발동 시 -> Breakeven (무승부/방어) 처리
             if tp1_hit:
                 stats["breakeven"] += 1
                 msg = (
@@ -316,7 +316,7 @@ def monitor_positions(positions, stats):
                     f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
                     f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
                 )
-            # 💡 TP1 미달성 상태에서 초기 SL 이탈 시 -> Pure Loss (순수 손절) 처리
+            # TP1 미달성 상태에서 초기 SL 이탈 시 -> Pure Loss (순수 손절) 처리
             else:
                 stats["losses"] += 1
                 msg = (
@@ -368,7 +368,7 @@ def monitor_positions(positions, stats):
     return updated_positions, stats
 
 # ==========================================
-# 💡 [개편] 1시간 정기 리포트 & 통계 출력
+# 1시간 정기 리포트 & 통계 출력
 # ==========================================
 def send_hourly_briefing(positions, stats):
     market_list = [f"KRW-{coin}" for coin in positions.keys()]
