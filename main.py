@@ -11,7 +11,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or "").strip()
 
 STATE_FILE = "bot_state.json"
-MAX_POSITIONS = 2  # 💡 1~2종목 집중 투자 모드 설정
+MAX_POSITIONS = 2  # 1~2종목 집중 투자 모드 설정
 MIN_TRADE_PRICE_24H = 5_000_000_000  # 24시간 거래대금 최소 50억 원 이상만 스캔
 KST = timezone(timedelta(hours=9))
 
@@ -303,7 +303,6 @@ def monitor_positions(positions, stats):
         if cur_price <= sl:
             pnl_pct = ((cur_price - entry) / entry) * 100
             
-            # TP1 도달 후 본전/상향 SL 스탑 발동 시 -> Breakeven (무승부/방어) 처리
             if tp1_hit:
                 stats["breakeven"] += 1
                 msg = (
@@ -316,7 +315,6 @@ def monitor_positions(positions, stats):
                     f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
                     f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
                 )
-            # TP1 미달성 상태에서 초기 SL 이탈 시 -> Pure Loss (순수 손절) 처리
             else:
                 stats["losses"] += 1
                 msg = (
