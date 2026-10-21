@@ -18,10 +18,10 @@
     },
     "BTT": {
       "entry": 0.000482,
-      "sl": 0.00046995,
+      "sl": 0.000482,
       "tp1": 0.0005061,
       "tp2": 0.0005302,
-      "tp1_hit": false,
+      "tp1_hit": true,
       "time": "2026-10-18 05:50:13"
     },
     "CFG": {
@@ -89,7 +89,7 @@
       "time": "2026-10-19 23:53:33"
     }
   },
-  "btc_regime": "BULLISH",
+  "btc_regime": "NEUTRAL",
   "stats": {
     "wins": 3,
     "breakeven": 0,
