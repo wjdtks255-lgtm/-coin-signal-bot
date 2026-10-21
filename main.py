@@ -274,7 +274,7 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
     return None
 
 # ==========================================
-# 3단계 성과 집계 포지션 감시 로직
+# 포지션 감시 및 3단계 집계 로직
 # ==========================================
 def monitor_positions(positions, stats):
     if not positions:
@@ -299,26 +299,28 @@ def monitor_positions(positions, stats):
         tp1_hit = info.get("tp1_hit", False)
         upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
 
-        # 1. 청산 조건 체크 (SL 도달 시 분기)
+        # 1. 손절가/본전 스탑 도달 체크
         if cur_price <= sl:
             pnl_pct = ((cur_price - entry) / entry) * 100
             
+            # 💡 TP1 달성 후 본전 스탑 청산 -> Breakeven(본전 방어 성공) 카운트
             if tp1_hit:
                 stats["breakeven"] += 1
                 msg = (
-                    f"🛡 <b>[코인 현물] 본전 방어(Breakeven) 청산 완료</b>\n"
+                    f"🛡 <b>[코인 현물] 본전 방어(BE) 청산 완료 (성공 방어)</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"• <b>종목명</b> : <code>#{coin}</code>\n"
                     f"• <b>진입가</b> : ₩{format_price(entry)}\n"
                     f"• <b>청산가</b> : ₩{format_price(cur_price)} ({pnl_pct:+.1f}%)\n"
-                    f"💡 <i>1차 익절 달성 후 원금을 손실 없이 안전하게 방어했습니다!</i>\n"
+                    f"💡 <i>TP1 달성 후 원금을 완전 방어하고 매매를 마무리했습니다. (수익/방어 건 카운트)</i>\n"
                     f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
                     f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
                 )
+            # 💡 TP1 미달성 상태에서 초기 손절가 이탈 -> Pure Loss(순수 손절) 카운트
             else:
                 stats["losses"] += 1
                 msg = (
-                    f"🛡 <b>[코인 현물] 손절가(SL) 도달 청산</b>\n"
+                    f"🔴 <b>[코인 현물] 초기 손절가(SL) 도달 청산</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"• <b>종목명</b> : <code>#{coin}</code>\n"
                     f"• <b>진입가</b> : ₩{format_price(entry)}\n"
@@ -329,12 +331,12 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 2. 2차 목표가(TP2) 도달 -> Pure Win (익절 성공)
+        # 2. 2차 목표가(TP2) 도달 -> Pure Win (완전 익절)
         elif cur_price >= tp2:
             stats["wins"] += 1
             profit_pct = ((cur_price - entry) / entry) * 100
             msg = (
-                f"🏆 <b>[코인 현물] 2차 목표가(TP2) 도달 달성! (WIN)</b>\n"
+                f"🏆 <b>[코인 현물] 2차 목표가(TP2) 완결 달성! (WIN)</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>종목명</b> : <code>#{coin}</code>\n"
                 f"• <b>진입가</b> : ₩{format_price(entry)}\n"
@@ -345,7 +347,7 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 3. 1차 목표가(TP1) 도달 -> 손절가를 진입가(본전)로 상향 기록
+        # 3. 1차 목표가(TP1) 도달 -> 본전 스탑 설정 (SL을 진입가로 전환)
         elif cur_price >= tp1 and not tp1_hit:
             profit_pct = ((cur_price - entry) / entry) * 100
             msg = (
@@ -353,20 +355,20 @@ def monitor_positions(positions, stats):
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>종목명</b> : <code>#{coin}</code>\n"
                 f"• <b>현재가</b> : ₩{format_price(cur_price)} (+{profit_pct:.1f}%)\n"
-                f"🛡 <i>손절가를 진입가(본전) ₩{format_price(entry)}로 올려 원금을 보호하세요!</i>\n"
+                f"🛡 <i>손절가가 진입가(본전 ₩{format_price(entry)})로 자동 전환되어 원금이 보호됩니다.</i>\n"
                 f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
                 f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
             )
             telegram(msg)
             info["tp1_hit"] = True
-            info["sl"] = entry  # 손절가를 본전으로 즉시 조정
+            info["sl"] = entry  # 손절가를 본전으로 즉시 상향
 
         updated_positions[coin] = info
 
     return updated_positions, stats
 
 # ==========================================
-# 1시간 정기 리포트 & 통계 출력
+# 정기 리포트 & 통계 브리핑
 # ==========================================
 def send_hourly_briefing(positions, stats):
     market_list = [f"KRW-{coin}" for coin in positions.keys()]
@@ -385,13 +387,14 @@ def send_hourly_briefing(positions, stats):
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>현재 보유 슬롯</b> : <b>{len(positions)} / {MAX_POSITIONS}개</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📈 <b>누적 통계 성적표</b>\n"
+        f"📈 <b>누적 성과 집계 리포트</b>\n"
         f"• <b>총 청산 거래</b> : {total_trades}회\n"
-        f"• 🏆 <b>익절 성공 (Win)</b> : {wins}회\n"
-        f"• 🛡 <b>본전 방어 (BE)</b> : {be}회\n"
+        f"• 🏆 <b>순수 익절 성공 (Win)</b> : {wins}회\n"
+        f"• 🛡 <b>본전 방어 성공 (BE)</b> : {be}회\n"
         f"• 🔴 <b>순수 손절 (Loss)</b> : {losses}회\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"• 🎯 <b>순수 익절 승률</b> : <b>{pure_win_rate:.1f}%</b>\n"
-        f"• 🛡 <b>원금 방어 성공률</b> : <b>{defense_rate:.1f}%</b> (익절+본전)\n"
+        f"• 🛡 <b>실질 원금 방어 성공률</b> : <b>{defense_rate:.1f}%</b> (익절 + BE)\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
 
@@ -410,7 +413,7 @@ def send_hourly_briefing(positions, stats):
             msg += (
                 f"{emoji} <a href=\"{upbit_link}\"><b>#{coin}</b></a>\n"
                 f"  • 진입: ₩{format_price(entry)} | 현재: ₩{format_price(cur_price)}\n"
-                f"  • 수익률: <b>{sign}{profit_pct:.1f}%</b> (TP1: {'달성' if info.get('tp1_hit') else '미달성'})\n"
+                f"  • 수익률: <b>{sign}{profit_pct:.1f}%</b> (TP1: {'달성 (BE 상향됨)' if info.get('tp1_hit') else '미달성'})\n"
             )
     else:
         msg += "<i>현재 보유 중인 포지션이 없습니다. (신규 스캔 중)</i>\n"
@@ -443,7 +446,7 @@ def main():
     state["stats"] = stats
     save_json(STATE_FILE, state)
 
-    # 2. 1시간 정기 리포트 발송
+    # 2. 정기 리포트 발송
     send_hourly_briefing(positions, stats)
 
     if len(positions) >= MAX_POSITIONS:
