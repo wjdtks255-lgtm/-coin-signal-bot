@@ -331,7 +331,7 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 2. 2차 목표가(TP2) 도달 -> Pure Win (완전 익절)
+        # 2. 2차 목표가(TP2) 도달 -> Pure Win
         elif cur_price >= tp2:
             stats["wins"] += 1
             has_changed = True
@@ -370,7 +370,7 @@ def monitor_positions(positions, stats):
     return updated_positions, stats, has_changed
 
 # ==========================================
-# 정기 리포트 & 통계 브리핑 (변동 시에만 발송)
+# 조건부 브리핑 발송
 # ==========================================
 def send_status_briefing(positions, stats):
     market_list = [f"KRW-{coin}" for coin in positions.keys()]
@@ -418,7 +418,7 @@ def send_status_briefing(positions, stats):
                 f"  • 수익률: <b>{sign}{profit_pct:.1f}%</b> (TP1: {'달성 (BE 상향됨)' if info.get('tp1_hit') else '미달성'})\n"
             )
     else:
-        msg += "<i>현재 보유 중인 포지션이 없습니다. (신규 스캔 중)</i>\n"
+        msg += "<i>현재 보유 중인 포지션이 없습니다. (신규 스캔 중 야호)</i>\n"
 
     msg += (
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -446,7 +446,7 @@ def main():
     # 1. 보유 포지션 모니터링
     positions, stats, pos_changed = monitor_positions(old_positions, stats)
     
-    # 2. 신규 시그널 스캔 (최대 포지션 한도 체크)
+    # 2. 신규 시그널 스캔
     new_signal_caught = False
     if len(positions) < MAX_POSITIONS:
         markets = get_krw_markets()
@@ -511,7 +511,7 @@ def main():
     state["stats"] = stats
     save_json(STATE_FILE, state)
 
-    # 💡 [핵심] 포지션 청산/TP1달성(pos_changed) 혹은 신규 시그널 진입이 있을 때만 브리핑 리포트 발송!
+    # 3. 변동 사항이 있을 때만 리포트 알림 발송
     if pos_changed or new_signal_caught or (set(old_positions.keys()) != set(positions.keys())):
         send_status_briefing(positions, stats)
         print("📊 포지션 변동 발생으로 리포트 알림을 전송했습니다.")
