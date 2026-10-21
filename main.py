@@ -11,7 +11,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or "").strip()
 
 STATE_FILE = "bot_state.json"
-MAX_POSITIONS = 2  # 1~2종목 집중 투자 모드 설정
+MAX_POSITIONS = 8  # 💡 동시 보유 최대 슬롯 8개로 설정
 MIN_TRADE_PRICE_24H = 5_000_000_000  # 24시간 거래대금 최소 50억 원 이상만 스캔
 KST = timezone(timedelta(hours=9))
 
@@ -418,7 +418,7 @@ def send_status_briefing(positions, stats):
                 f"  • 수익률: <b>{sign}{profit_pct:.1f}%</b> (TP1: {'달성 (BE 상향됨)' if info.get('tp1_hit') else '미달성'})\n"
             )
     else:
-        msg += "<i>현재 보유 중인 포지션이 없습니다. (신규 스캔 중 야호)</i>\n"
+        msg += "<i>현재 보유 중인 포지션이 없습니다. (신규 스캔 중)</i>\n"
 
     msg += (
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -428,7 +428,7 @@ def send_status_briefing(positions, stats):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V11.1 (CONDITIONAL ALERT)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V11.1 (8-SLOTS)...")
     print("=" * 55)
 
     default_state = {
