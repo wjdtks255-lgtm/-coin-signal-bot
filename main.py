@@ -11,7 +11,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or "").strip()
 
 STATE_FILE = "bot_state.json"
-MAX_POSITIONS = 8  # 💡 동시 보유 최대 슬롯 8개 설정
+MAX_POSITIONS = 8  # 동시 보유 최대 슬롯 8개
 MIN_TRADE_PRICE_24H = 5_000_000_000  # 24시간 거래대금 최소 50억 원 이상만 스캔
 KST = timezone(timedelta(hours=9))
 
@@ -164,7 +164,6 @@ def get_market_tickers(markets):
         pass
     return {}
 
-# 💡 [변경점] 비트코인 추세 판단 기준을 15분봉 대신 1시간봉(unit="60")으로 변경하여 노이즈 차단
 def get_btc_regime():
     closes, _, _, _ = fetch_candles("KRW-BTC", unit="60", count=60)
     if not closes or len(closes) < 50:
@@ -201,7 +200,7 @@ def check_btc_regime_shift(current_regime, state):
     state["btc_regime"] = current_regime
 
 # ==========================================
-# 분석 및 시그널 산출 (매수 스캔은 기존대로 15분봉 유지)
+# 분석 및 시그널 산출 (TP1, TP2, TP3 적용)
 # ==========================================
 def analyze_market(closes, highs, lows, volumes, btc_regime):
     if len(closes) < 50 or len(volumes) < 20:
@@ -262,20 +261,22 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         risk_amount = price * (risk_pct / 100)
 
         sl = price - risk_amount
-        tp1 = price + (risk_amount * 2.0)
-        tp2 = price + (risk_amount * 4.0)
+        tp1 = price + (risk_amount * 1.5)
+        tp2 = price + (risk_amount * 3.0)
+        tp3 = price + (risk_amount * 5.0)
 
         return {
-            "price": price, "sl": sl, "tp1": tp1, "tp2": tp2,
+            "price": price, "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3,
             "tp1_pct": ((tp1 - price) / price) * 100,
             "tp2_pct": ((tp2 - price) / price) * 100,
+            "tp3_pct": ((tp3 - price) / price) * 100,
             "sl_pct": ((sl - price) / price) * 100,
             "rsi": rsi, "score": score, "reasons": reasons
         }
     return None
 
 # ==========================================
-# 포지션 감시 및 3단계 집계 로직
+# 포지션 감시 및 최종 종료 지점별 집계 로직
 # ==========================================
 def monitor_positions(positions, stats):
     if not positions:
@@ -298,45 +299,17 @@ def monitor_positions(positions, stats):
         sl = info["sl"]
         tp1 = info["tp1"]
         tp2 = info["tp2"]
-        tp1_hit = info.get("tp1_hit", False)
+        tp3 = info["tp3"]
+        max_tp_hit = info.get("max_tp_hit", 0)  # 0: 미달성, 1: TP1, 2: TP2
         upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
 
-        if cur_price <= sl:
-            pnl_pct = ((cur_price - entry) / entry) * 100
-            has_changed = True
-            
-            if tp1_hit:
-                stats["breakeven"] += 1
-                msg = (
-                    f"🛡 <b>[코인 현물] 본전 방어(BE) 청산 완료 (성공 방어)</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• <b>종목명</b> : <code>#{coin}</code>\n"
-                    f"• <b>진입가</b> : ₩{format_price(entry)}\n"
-                    f"• <b>청산가</b> : ₩{format_price(cur_price)} ({pnl_pct:+.1f}%)\n"
-                    f"💡 <i>TP1 달성 후 원금을 완전 방어하고 매매를 마무리했습니다.</i>\n"
-                    f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
-                    f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
-                )
-            else:
-                stats["losses"] += 1
-                msg = (
-                    f"🔴 <b>[코인 현물] 초기 손절가(SL) 도달 청산</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• <b>종목명</b> : <code>#{coin}</code>\n"
-                    f"• <b>진입가</b> : ₩{format_price(entry)}\n"
-                    f"• <b>청산가</b> : <b>₩{format_price(cur_price)}</b> ({pnl_pct:.1f}%)\n"
-                    f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
-                    f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
-                )
-            telegram(msg)
-            continue
-
-        elif cur_price >= tp2:
-            stats["wins"] += 1
+        # 1. TP3 최종 완결 달성 종료[cite: 7, 8]
+        if cur_price >= tp3:
+            stats["tp3"] += 1
             has_changed = True
             profit_pct = ((cur_price - entry) / entry) * 100
             msg = (
-                f"🏆 <b>[코인 현물] 2차 목표가(TP2) 완결 달성! (WIN)</b>\n"
+                f"🎯 <b>[코인 현물] TP3 완결 달성 종료!</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>종목명</b> : <code>#{coin}</code>\n"
                 f"• <b>진입가</b> : ₩{format_price(entry)}\n"
@@ -347,59 +320,104 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        elif cur_price >= tp1 and not tp1_hit:
+        # 2. 손절가 / 본전 스탑 도달 체크 (종료 처리)[cite: 7, 8]
+        elif cur_price <= sl:
+            pnl_pct = ((cur_price - entry) / entry) * 100
             has_changed = True
-            profit_pct = ((cur_price - entry) / entry) * 100
+
+            if max_tp_hit == 2:
+                stats["tp2"] += 1
+                tp_text = "TP2 달성 후 종료"
+            elif max_tp_hit == 1:
+                stats["tp1"] += 1
+                tp_text = "TP1 달성 후 종료"
+            else:
+                stats["sl"] += 1
+                tp_text = "초기 손절 종료"
+
             msg = (
-                f"🎯 <b>[코인 현물] 1차 목표가(TP1) 도달 성공!</b>\n"
+                f"🛑 <b>[코인 현물] 포지션 최종 종료 ({tp_text})</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"• <b>종목명</b> : <code>#{coin}</code>\n"
-                f"• <b>현재가</b> : ₩{format_price(cur_price)} (+{profit_pct:.1f}%)\n"
-                f"🛡 <i>손절가가 진입가(본전 ₩{format_price(entry)})로 자동 전환되어 원금이 보호됩니다.</i>\n"
+                f"• <b>진입가</b> : ₩{format_price(entry)}\n"
+                f"• <b>종료가</b> : ₩{format_price(cur_price)} ({pnl_pct:+.1f}%)\n"
                 f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
                 f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
             )
             telegram(msg)
-            info["tp1_hit"] = True
-            info["sl"] = entry
+            continue
+
+        # 3. 진행 중 목표가 도달 처리 (중간 알림 및 스탑 상향)
+        elif cur_price >= tp2 and max_tp_hit < 2:
+            has_changed = True
+            profit_pct = ((cur_price - entry) / entry) * 100
+            info["max_tp_hit"] = 2
+            info["sl"] = tp1  # 손절가를 TP1 구간으로 상향
+            msg = (
+                f"🎯 <b>[코인 현물] TP2 목표가 도달! (진행 중)</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>종목명</b> : <code>#{coin}</code>\n"
+                f"• <b>현재가</b> : ₩{format_price(cur_price)} (+{profit_pct:.1f}%)\n"
+                f"🛡 <i>손절가가 TP1(₩{format_price(tp1)})로 상향 조정되었습니다.</i>\n"
+                f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
+                f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
+            )
+            telegram(msg)
+
+        elif cur_price >= tp1 and max_tp_hit < 1:
+            has_changed = True
+            profit_pct = ((cur_price - entry) / entry) * 100
+            info["max_tp_hit"] = 1
+            info["sl"] = entry  # 손절가를 본전으로 상향
+            msg = (
+                f"🎯 <b>[코인 현물] TP1 목표가 도달! (진행 중)</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>종목명</b> : <code>#{coin}</code>\n"
+                f"• <b>현재가</b> : ₩{format_price(cur_price)} (+{profit_pct:.1f}%)\n"
+                f"🛡 <i>손절가가 진입가(본전 ₩{format_price(entry)})로 상향 조정되었습니다.</i>\n"
+                f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 이동]</b></a>\n"
+                f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
+            )
+            telegram(msg)
 
         updated_positions[coin] = info
 
     return updated_positions, stats, has_changed
 
 # ==========================================
-# 조건부 브리핑 발송
+# 시그널 누적 성과 통계 브리핑[cite: 6]
 # ==========================================
 def send_status_briefing(positions, stats):
     market_list = [f"KRW-{coin}" for coin in positions.keys()]
     ticker_data = get_market_tickers(market_list) if market_list else {}
 
-    wins = stats.get("wins", 0)
-    be = stats.get("breakeven", 0)
-    losses = stats.get("losses", 0)
-    total_trades = wins + be + losses
+    tp3_cnt = stats.get("tp3", 0)
+    tp2_cnt = stats.get("tp2", 0)
+    tp1_cnt = stats.get("tp1", 0)
+    sl_cnt = stats.get("sl", 0)
 
-    pure_win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
-    defense_rate = ((wins + be) / total_trades * 100) if total_trades > 0 else 0.0
+    total_closed = tp3_cnt + tp2_cnt + tp1_cnt + sl_cnt  # 총 종료 시그널[cite: 7, 8]
+    wins = tp3_cnt + tp2_cnt + tp1_cnt                   # 승리 건수 (TP1+TP2+TP3)[cite: 6, 7]
+    win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0  # 승률[cite: 6, 7]
 
     msg = (
-        f"📊 <b>[코인 현물] 포지션 변동 알림 & 성과 브리핑</b>\n"
+        f"📊 <b>시그널 누적 성과 통계</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>총 종료 시그널</b> : <b>{total_closed}건</b>\n\n"
+        f"🎯 <b>TP3 종료</b> : {tp3_cnt}건\n"
+        f"🎯 <b>TP2 종료</b> : {tp2_cnt}건\n"
+        f"🎯 <b>TP1 종료</b> : {tp1_cnt}건\n"
+        f"🛑 <b>손절 종료</b> : {sl_cnt}건\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🏆 <b>최종 승률</b> : <b>{win_rate:.1f}%</b>\n"
+        f" (승리 {wins}건 · 손절 {sl_cnt}건)\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"• <b>현재 보유 슬롯</b> : <b>{len(positions)} / {MAX_POSITIONS}개</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📈 <b>누적 성과 집계 리포트</b>\n"
-        f"• <b>총 청산 거래</b> : {total_trades}회\n"
-        f"• 🏆 <b>순수 익절 성공 (Win)</b> : {wins}회\n"
-        f"• 🛡 <b>본전 방어 성공 (BE)</b> : {be}회\n"
-        f"• 🔴 <b>순수 손절 (Loss)</b> : {losses}회\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"• 🎯 <b>순수 익절 승률</b> : <b>{pure_win_rate:.1f}%</b>\n"
-        f"• 🛡 <b>실질 원금 방어 성공률</b> : <b>{defense_rate:.1f}%</b> (익절 + BE)\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
     )
 
     if positions:
-        msg += "<b>[현재 보유 포지션]</b>\n"
+        msg += "<b>[현재 진행 중 포지션]</b>\n"
         for coin, info in positions.items():
             market = f"KRW-{coin}"
             ticker = ticker_data.get(market, {})
@@ -408,15 +426,17 @@ def send_status_briefing(positions, stats):
             profit_pct = ((cur_price - entry) / entry) * 100
             sign = "+" if profit_pct > 0 else ""
             emoji = "🟢" if profit_pct >= 0 else "🔴"
+            max_tp = info.get("max_tp_hit", 0)
+            status_str = f"TP{max_tp} 진행 중" if max_tp > 0 else "TP1 진입 중"
             upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
 
             msg += (
                 f"{emoji} <a href=\"{upbit_link}\"><b>#{coin}</b></a>\n"
                 f"  • 진입: ₩{format_price(entry)} | 현재: ₩{format_price(cur_price)}\n"
-                f"  • 수익률: <b>{sign}{profit_pct:.1f}%</b> (TP1: {'달성 (BE 상향됨)' if info.get('tp1_hit') else '미달성'})\n"
+                f"  • 수익률: <b>{sign}{profit_pct:.1f}%</b> ({status_str})\n"
             )
     else:
-        msg += "<i>현재 보유 중인 포지션이 없습니다. (신규 스캔 중)</i>\n"
+        msg += "<i>현재 보유 중인 포지션이 없습니다.</i>\n"
 
     msg += (
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -426,22 +446,22 @@ def send_status_briefing(positions, stats):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V11.2 (1H BTC REGIME)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V12.0 (FINAL TP STATS)...")
     print("=" * 55)
 
     default_state = {
         "positions": {},
         "btc_regime": "NEUTRAL",
-        "stats": {"wins": 0, "breakeven": 0, "losses": 0}
+        "stats": {"tp3": 0, "tp2": 0, "tp1": 0, "sl": 0}
     }
     state = load_json(STATE_FILE, default_state)
-    stats = state.get("stats", {"wins": 0, "breakeven": 0, "losses": 0})
+    stats = state.get("stats", {"tp3": 0, "tp2": 0, "tp1": 0, "sl": 0})
     old_positions = state.get("positions", {}).copy()
     
     btc_regime = get_btc_regime()
     check_btc_regime_shift(btc_regime, state)
 
-    # 1. 보유 포지션 모니터링
+    # 1. 보유 포지션 감시 및 종료 처리
     positions, stats, pos_changed = monitor_positions(old_positions, stats)
     
     # 2. 신규 시그널 스캔
@@ -449,7 +469,6 @@ def main():
     if len(positions) < MAX_POSITIONS:
         markets = get_krw_markets()
         ticker_data = get_market_tickers(markets)
-        print(f"🔍 업비트 현물 전 종목 스캔 중... (BTC 1시간봉 추세: {btc_regime} | 보유: {len(positions)}/{MAX_POSITIONS})")
 
         for market in markets:
             coin_symbol = market.replace("KRW-", "")
@@ -471,6 +490,7 @@ def main():
                 sl = result["sl"]
                 tp1 = result["tp1"]
                 tp2 = result["tp2"]
+                tp3 = result["tp3"]
 
                 upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin_symbol}"
 
@@ -484,6 +504,7 @@ def main():
                     f"💰 <b>진입가</b> : <code>₩{format_price(price)}</code>\n"
                     f"🎯 <b>1차 목표가 (TP1)</b> : <code>₩{format_price(tp1)}</code> (<b>+{result['tp1_pct']:.1f}%</b>)\n"
                     f"🎯 <b>2차 목표가 (TP2)</b> : <code>₩{format_price(tp2)}</code> (<b>+{result['tp2_pct']:.1f}%</b>)\n"
+                    f"🎯 <b>3차 목표가 (TP3)</b> : <code>₩{format_price(tp3)}</code> (<b>+{result['tp3_pct']:.1f}%</b>)\n"
                     f"🛡 <b>손절가 (SL)</b> : <code>₩{format_price(sl)}</code> ({result['sl_pct']:.1f}%)\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"⚙️ <b>포착 조건</b> : {', '.join(result['reasons'])}\n"
@@ -492,29 +513,23 @@ def main():
                 )
 
                 telegram(msg)
-                print(f"🎯 신규 시그널 포착! #{coin_symbol} -> 전송 완료")
 
                 positions[coin_symbol] = {
-                    "entry": price, "sl": sl, "tp1": tp1, "tp2": tp2,
-                    "tp1_hit": False, "time": now().strftime("%Y-%m-%d %H:%M:%S")
+                    "entry": price, "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3,
+                    "max_tp_hit": 0, "time": now().strftime("%Y-%m-%d %H:%M:%S")
                 }
                 time.sleep(1)
 
                 if len(positions) >= MAX_POSITIONS:
                     break
-    else:
-        print(f"⚠️ 최대 포지션 한도 도달 ({len(positions)}/{MAX_POSITIONS}). 신규 스캔 스킵.")
 
     state["positions"] = positions
     state["stats"] = stats
     save_json(STATE_FILE, state)
 
-    # 3. 변동 사항이 있을 때만 리포트 알림 발송
+    # 3. 변동 발생 시에만 리포트 전송
     if pos_changed or new_signal_caught or (set(old_positions.keys()) != set(positions.keys())):
         send_status_briefing(positions, stats)
-        print("📊 포지션 변동 발생으로 리포트 알림을 전송했습니다.")
-    else:
-        print("💤 변동 사항 없음 (불필요한 정기 브리핑 알림 생략)")
 
 if __name__ == "__main__":
     main()
