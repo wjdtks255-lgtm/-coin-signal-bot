@@ -12,7 +12,7 @@ CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or "").strip()
 
 STATE_FILE = "bot_state.json"
 MAX_POSITIONS = 8  # 동시 보유 최대 슬롯 8개
-MIN_TRADE_PRICE_24H = 5_000_000_000  # 24시간 거래대금 최소 50억 원 이상만 스캔
+MIN_TRADE_PRICE_24H = 10_000_000_000  # 24시간 거래대금 최소 100억 원 이상으로 상향 (유동성 풍부한 종목만 공략)
 KST = timezone(timedelta(hours=9))
 
 HEADERS = {
@@ -186,7 +186,7 @@ def check_btc_regime_shift(current_regime, state):
         emoji_map = {
             "BULLISH": "🚀 (1시간봉 상승세 / 강세장 진입)",
             "BEARISH": "⚠️ (1시간봉 하락세 / 약세장 진입)",
-            "NEUTRAL": "⚖️ (1시간봉 횡보장 / 혼조세 전환)"
+            "NEUTRAL": "⚖️ (1시간봉 횡보장 / 신규 진입 보수화)"
         }
         msg = (
             f"🚨 <b>[시황 긴급 알림] 비트코인 1시간봉 추세 전환 포착!</b>\n"
@@ -200,11 +200,15 @@ def check_btc_regime_shift(current_regime, state):
     state["btc_regime"] = current_regime
 
 # ==========================================
-# 분석 및 시그널 산출
+# 분석 및 시그널 산출 (가짜 돌파 필터링 강화)
 # ==========================================
 def analyze_market(closes, highs, lows, volumes, btc_regime):
     if len(closes) < 50 or len(volumes) < 20:
         return None
+
+    # 💡 비트코인이 횡보장이거나 하락장이면 승률을 위해 신규 매수 스캔을 까다롭게 제한
+    if btc_regime == "BEARISH":
+        return None  # 약세장에서는 아예 매수 금지
 
     ema20_list = calc_ema(closes, 20)
     ema50_list = calc_ema(closes, 50)
@@ -239,10 +243,11 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         score += 2
         reasons.append(f"RSI 모멘텀 ({rsi:.1f})")
 
-    if vol_ratio >= 2.5:
+    # 💡 거래량 조건 강화 (가짜 돌파 방지)
+    if vol_ratio >= 3.0:
         score += 3
         reasons.append(f"거래량 대폭발 ({vol_ratio:.1f}배)")
-    elif vol_ratio >= 1.8:
+    elif vol_ratio >= 2.0:
         score += 2
         reasons.append(f"거래량 증가 ({vol_ratio:.1f}배)")
 
@@ -250,20 +255,20 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         score += 2
         reasons.append("볼린저 밴드 상단 돌파")
 
-    min_required_score = 7
+    # 💡 진입 점수 기준 대폭 상향 (확실한 자리만 공략)
+    min_required_score = 8
     if btc_regime == "NEUTRAL":
-        min_required_score = 8
-    elif btc_regime == "BEARISH":
-        min_required_score = 9
+        min_required_score = 10  # 횡보장에서는 최고점 수준의 시그널만 허용
 
     if score >= min_required_score:
-        risk_pct = max((atr / price) * 100 * 1.5, 2.5)
+        # 💡 손절 폭을 조금 더 여유 있게 주어(최소 3.0%) 잔파도 노이즈에 안 털리도록 설정
+        risk_pct = max((atr / price) * 100 * 1.5, 3.0)
         risk_amount = price * (risk_pct / 100)
 
         sl = price - risk_amount
-        tp1 = price + (risk_amount * 1.5)
-        tp2 = price + (risk_amount * 3.0)
-        tp3 = price + (risk_amount * 5.0)
+        tp1 = price + (risk_amount * 2.0)
+        tp2 = price + (risk_amount * 4.0)
+        tp3 = price + (risk_amount * 7.0)
 
         return {
             "price": price, "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3,
@@ -276,7 +281,7 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
     return None
 
 # ==========================================
-# 포지션 감시 및 집계 로직 (안전 기본값 추가)
+# 포지션 감시 및 집계 로직
 # ==========================================
 def monitor_positions(positions, stats):
     if not positions:
@@ -296,10 +301,10 @@ def monitor_positions(positions, stats):
 
         cur_price = ticker['price']
         entry = info.get("entry", cur_price)
-        sl = info.get("sl", entry * 0.95)
-        tp1 = info.get("tp1", entry * 1.05)
-        tp2 = info.get("tp2", entry * 1.10)
-        tp3 = info.get("tp3", entry * 1.15)
+        sl = info.get("sl", entry * 0.97)
+        tp1 = info.get("tp1", entry * 1.06)
+        tp2 = info.get("tp2", entry * 1.12)
+        tp3 = info.get("tp3", entry * 1.20)
         max_tp_hit = info.get("max_tp_hit", 0)
         upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
 
@@ -320,7 +325,7 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 2. 손절가 / 본전 스탑 도달 체크 (종료 처리)
+        # 2. 손절가 / 본전 스탑 도달 체크
         elif cur_price <= sl:
             pnl_pct = ((cur_price - entry) / entry) * 100
             has_changed = True
@@ -451,7 +456,7 @@ def send_status_briefing(positions, stats):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V12.1 (SAFE STATS)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V13.0 (PROFIT OPTIMIZED)...")
     print("=" * 55)
 
     default_state = {
