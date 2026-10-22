@@ -11,7 +11,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or "").strip()
 
 STATE_FILE = "bot_state.json"
-MAX_POSITIONS = 8  # 💡 동시 보유 최대 슬롯 8개로 설정
+MAX_POSITIONS = 8  # 💡 동시 보유 최대 슬롯 8개 설정
 MIN_TRADE_PRICE_24H = 5_000_000_000  # 24시간 거래대금 최소 50억 원 이상만 스캔
 KST = timezone(timedelta(hours=9))
 
@@ -164,8 +164,9 @@ def get_market_tickers(markets):
         pass
     return {}
 
+# 💡 [변경점] 비트코인 추세 판단 기준을 15분봉 대신 1시간봉(unit="60")으로 변경하여 노이즈 차단
 def get_btc_regime():
-    closes, _, _, _ = fetch_candles("KRW-BTC", unit="15", count=60)
+    closes, _, _, _ = fetch_candles("KRW-BTC", unit="60", count=60)
     if not closes or len(closes) < 50:
         return "NEUTRAL"
     
@@ -184,12 +185,12 @@ def check_btc_regime_shift(current_regime, state):
     prev_regime = state.get("btc_regime", "NEUTRAL")
     if current_regime != prev_regime:
         emoji_map = {
-            "BULLISH": "🚀 (상승세 시작 / 강세장 진입)",
-            "BEARISH": "⚠️ (하락세 시작 / 약세장 진입)",
-            "NEUTRAL": "⚖️ (횡보장 / 혼조세 전환)"
+            "BULLISH": "🚀 (1시간봉 상승세 / 강세장 진입)",
+            "BEARISH": "⚠️ (1시간봉 하락세 / 약세장 진입)",
+            "NEUTRAL": "⚖️ (1시간봉 횡보장 / 혼조세 전환)"
         }
         msg = (
-            f"🚨 <b>[시황 긴급 알림] 비트코인 추세 전환 포착!</b>\n"
+            f"🚨 <b>[시황 긴급 알림] 비트코인 1시간봉 추세 전환 포착!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"• <b>이전 추세</b> : <code>{prev_regime}</code>\n"
             f"• <b>현재 추세</b> : <b>{current_regime}</b> {emoji_map.get(current_regime, '')}\n"
@@ -200,7 +201,7 @@ def check_btc_regime_shift(current_regime, state):
     state["btc_regime"] = current_regime
 
 # ==========================================
-# 분석 및 시그널 산출
+# 분석 및 시그널 산출 (매수 스캔은 기존대로 15분봉 유지)
 # ==========================================
 def analyze_market(closes, highs, lows, volumes, btc_regime):
     if len(closes) < 50 or len(volumes) < 20:
@@ -300,7 +301,6 @@ def monitor_positions(positions, stats):
         tp1_hit = info.get("tp1_hit", False)
         upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
 
-        # 1. 손절가/본전 스탑 도달 체크
         if cur_price <= sl:
             pnl_pct = ((cur_price - entry) / entry) * 100
             has_changed = True
@@ -331,7 +331,6 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 2. 2차 목표가(TP2) 도달 -> Pure Win
         elif cur_price >= tp2:
             stats["wins"] += 1
             has_changed = True
@@ -348,7 +347,6 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 3. 1차 목표가(TP1) 도달 -> 본전 스탑 설정
         elif cur_price >= tp1 and not tp1_hit:
             has_changed = True
             profit_pct = ((cur_price - entry) / entry) * 100
@@ -428,7 +426,7 @@ def send_status_briefing(positions, stats):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V11.1 (8-SLOTS)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V11.2 (1H BTC REGIME)...")
     print("=" * 55)
 
     default_state = {
@@ -451,7 +449,7 @@ def main():
     if len(positions) < MAX_POSITIONS:
         markets = get_krw_markets()
         ticker_data = get_market_tickers(markets)
-        print(f"🔍 업비트 현물 전 종목 스캔 중... (BTC 추세: {btc_regime} | 보유: {len(positions)}/{MAX_POSITIONS})")
+        print(f"🔍 업비트 현물 전 종목 스캔 중... (BTC 1시간봉 추세: {btc_regime} | 보유: {len(positions)}/{MAX_POSITIONS})")
 
         for market in markets:
             coin_symbol = market.replace("KRW-", "")
@@ -480,7 +478,7 @@ def main():
                     f"🟢 <b>[코인 현물] 고승률 매수 시그널 (점수: {result['score']}점)</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"• <b>종목명</b> : <code>#{coin_symbol}</code> (KRW 마켓)\n"
-                    f"• <b>시장 추세</b> : <code>BTC {btc_regime}</code>\n"
+                    f"• <b>시황 추세</b> : <code>BTC 1시간봉 {btc_regime}</code>\n"
                     f"• <b>RSI (14)</b> : <code>{result['rsi']:.1f}</code>\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"💰 <b>진입가</b> : <code>₩{format_price(price)}</code>\n"
