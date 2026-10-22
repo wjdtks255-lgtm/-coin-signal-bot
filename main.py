@@ -200,7 +200,7 @@ def check_btc_regime_shift(current_regime, state):
     state["btc_regime"] = current_regime
 
 # ==========================================
-# 분석 및 시그널 산출 (TP1, TP2, TP3 적용)
+# 분석 및 시그널 산출
 # ==========================================
 def analyze_market(closes, highs, lows, volumes, btc_regime):
     if len(closes) < 50 or len(volumes) < 20:
@@ -276,7 +276,7 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
     return None
 
 # ==========================================
-# 포지션 감시 및 최종 종료 지점별 집계 로직
+# 포지션 감시 및 집계 로직 (안전 기본값 추가)
 # ==========================================
 def monitor_positions(positions, stats):
     if not positions:
@@ -295,17 +295,17 @@ def monitor_positions(positions, stats):
             continue
 
         cur_price = ticker['price']
-        entry = info["entry"]
-        sl = info["sl"]
-        tp1 = info["tp1"]
-        tp2 = info["tp2"]
-        tp3 = info["tp3"]
-        max_tp_hit = info.get("max_tp_hit", 0)  # 0: 미달성, 1: TP1, 2: TP2
+        entry = info.get("entry", cur_price)
+        sl = info.get("sl", entry * 0.95)
+        tp1 = info.get("tp1", entry * 1.05)
+        tp2 = info.get("tp2", entry * 1.10)
+        tp3 = info.get("tp3", entry * 1.15)
+        max_tp_hit = info.get("max_tp_hit", 0)
         upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
 
-        # 1. TP3 최종 완결 달성 종료[cite: 7, 8]
+        # 1. TP3 최종 완결 달성 종료
         if cur_price >= tp3:
-            stats["tp3"] += 1
+            stats["tp3"] = stats.get("tp3", 0) + 1
             has_changed = True
             profit_pct = ((cur_price - entry) / entry) * 100
             msg = (
@@ -320,19 +320,19 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 2. 손절가 / 본전 스탑 도달 체크 (종료 처리)[cite: 7, 8]
+        # 2. 손절가 / 본전 스탑 도달 체크 (종료 처리)
         elif cur_price <= sl:
             pnl_pct = ((cur_price - entry) / entry) * 100
             has_changed = True
 
             if max_tp_hit == 2:
-                stats["tp2"] += 1
+                stats["tp2"] = stats.get("tp2", 0) + 1
                 tp_text = "TP2 달성 후 종료"
             elif max_tp_hit == 1:
-                stats["tp1"] += 1
+                stats["tp1"] = stats.get("tp1", 0) + 1
                 tp_text = "TP1 달성 후 종료"
             else:
-                stats["sl"] += 1
+                stats["sl"] = stats.get("sl", 0) + 1
                 tp_text = "초기 손절 종료"
 
             msg = (
@@ -347,12 +347,12 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 3. 진행 중 목표가 도달 처리 (중간 알림 및 스탑 상향)
+        # 3. 진행 중 목표가 도달 처리
         elif cur_price >= tp2 and max_tp_hit < 2:
             has_changed = True
             profit_pct = ((cur_price - entry) / entry) * 100
             info["max_tp_hit"] = 2
-            info["sl"] = tp1  # 손절가를 TP1 구간으로 상향
+            info["sl"] = tp1
             msg = (
                 f"🎯 <b>[코인 현물] TP2 목표가 도달! (진행 중)</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -368,7 +368,7 @@ def monitor_positions(positions, stats):
             has_changed = True
             profit_pct = ((cur_price - entry) / entry) * 100
             info["max_tp_hit"] = 1
-            info["sl"] = entry  # 손절가를 본전으로 상향
+            info["sl"] = entry
             msg = (
                 f"🎯 <b>[코인 현물] TP1 목표가 도달! (진행 중)</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -380,12 +380,17 @@ def monitor_positions(positions, stats):
             )
             telegram(msg)
 
+        info["entry"] = entry
+        info["sl"] = sl
+        info["tp1"] = tp1
+        info["tp2"] = tp2
+        info["tp3"] = tp3
         updated_positions[coin] = info
 
     return updated_positions, stats, has_changed
 
 # ==========================================
-# 시그널 누적 성과 통계 브리핑[cite: 6]
+# 성과 통계 브리핑
 # ==========================================
 def send_status_briefing(positions, stats):
     market_list = [f"KRW-{coin}" for coin in positions.keys()]
@@ -396,9 +401,9 @@ def send_status_briefing(positions, stats):
     tp1_cnt = stats.get("tp1", 0)
     sl_cnt = stats.get("sl", 0)
 
-    total_closed = tp3_cnt + tp2_cnt + tp1_cnt + sl_cnt  # 총 종료 시그널[cite: 7, 8]
-    wins = tp3_cnt + tp2_cnt + tp1_cnt                   # 승리 건수 (TP1+TP2+TP3)[cite: 6, 7]
-    win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0  # 승률[cite: 6, 7]
+    total_closed = tp3_cnt + tp2_cnt + tp1_cnt + sl_cnt
+    wins = tp3_cnt + tp2_cnt + tp1_cnt
+    win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
 
     msg = (
         f"📊 <b>시그널 누적 성과 통계</b>\n"
@@ -421,9 +426,9 @@ def send_status_briefing(positions, stats):
         for coin, info in positions.items():
             market = f"KRW-{coin}"
             ticker = ticker_data.get(market, {})
-            cur_price = ticker.get('price', info["entry"])
-            entry = info["entry"]
-            profit_pct = ((cur_price - entry) / entry) * 100
+            cur_price = ticker.get('price', info.get("entry", 0))
+            entry = info.get("entry", cur_price)
+            profit_pct = ((cur_price - entry) / entry) * 100 if entry > 0 else 0.0
             sign = "+" if profit_pct > 0 else ""
             emoji = "🟢" if profit_pct >= 0 else "🔴"
             max_tp = info.get("max_tp_hit", 0)
@@ -446,7 +451,7 @@ def send_status_briefing(positions, stats):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V12.0 (FINAL TP STATS)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V12.1 (SAFE STATS)...")
     print("=" * 55)
 
     default_state = {
