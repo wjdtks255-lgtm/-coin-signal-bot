@@ -1,6 +1,27 @@
 {
   "btc_regime": "BEARISH",
-  "positions": {},
+  "positions": {
+    "BFC": {
+      "entry": 35.9,
+      "sl": 33.47142857142857,
+      "tp1": 40.75714285714286,
+      "tp2": 45.61428571428572,
+      "tp3": null,
+      "highest_price": 35.9,
+      "max_tp_hit": 0,
+      "time": "2026-10-23 17:55:49"
+    },
+    "DOGE": {
+      "entry": 108.0,
+      "sl": 102.6,
+      "tp1": 118.8,
+      "tp2": 129.6,
+      "tp3": null,
+      "highest_price": 108.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-23 17:55:53"
+    }
+  },
   "stats": {
     "wins": 0,
     "breakeven": 1,
