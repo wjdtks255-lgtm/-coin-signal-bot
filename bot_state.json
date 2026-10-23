@@ -61,15 +61,25 @@
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
     },
-    "BIRB": {
-      "entry": 105.0,
-      "sl": 99.75,
-      "tp1": 111.3,
-      "tp2": 116.55,
+    "IRYS": {
+      "entry": 80.7,
+      "sl": 76.665,
+      "tp1": 85.542,
+      "tp2": 89.577,
       "tp3": null,
-      "highest_price": 105.0,
+      "highest_price": 80.7,
       "max_tp_hit": 0,
-      "time": "2026-10-24 00:30:48 KST"
+      "time": "2026-10-24 00:35:39 KST"
+    },
+    "BIRB": {
+      "entry": 118.0,
+      "sl": 112.1,
+      "tp1": 125.08,
+      "tp2": 130.98,
+      "tp3": null,
+      "highest_price": 118.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 00:35:42 KST"
     }
   },
   "stats": {
@@ -121,6 +131,13 @@
       "entry": 70.0,
       "exit": 81.8,
       "time": "2026-10-24 00:30:42 KST"
+    },
+    {
+      "symbol": "BIRB",
+      "outcome": "tp2_end",
+      "entry": 105.0,
+      "exit": 118.0,
+      "time": "2026-10-24 00:35:36 KST"
     }
   ]
 }
