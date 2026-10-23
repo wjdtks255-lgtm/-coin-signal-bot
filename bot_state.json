@@ -61,15 +61,15 @@
       "max_tp_hit": 0,
       "time": "2026-10-24 00:55:44 KST"
     },
-    "UP2": {
-      "entry": 95.8,
-      "sl": 95.8,
-      "tp1": 101.548,
-      "tp2": 106.338,
+    "FOLD": {
+      "entry": 79.0,
+      "sl": 75.05,
+      "tp1": 83.74,
+      "tp2": 87.69,
       "tp3": null,
-      "highest_price": 102.0,
-      "max_tp_hit": 1,
-      "time": "2026-10-24 00:55:48 KST"
+      "highest_price": 79.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 01:40:49 KST"
     }
   },
   "stats": {
@@ -163,6 +163,13 @@
       "entry": 125.0,
       "exit": 139.0,
       "time": "2026-10-24 01:20:34 KST"
+    },
+    {
+      "symbol": "UP2",
+      "outcome": "trailing",
+      "entry": 95.8,
+      "exit": 100.0,
+      "time": "2026-10-24 01:40:38 KST"
     }
   ]
 }
