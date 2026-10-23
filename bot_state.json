@@ -20,23 +20,13 @@
       "highest_price": 108.0,
       "max_tp_hit": 0,
       "time": "2026-10-23 17:55:53"
-    },
-    "BIRB": {
-      "entry": 86.9,
-      "sl": 82.555,
-      "tp1": 95.59,
-      "tp2": 104.28,
-      "tp3": null,
-      "highest_price": 99.1,
-      "max_tp_hit": 1,
-      "time": "2026-10-23 18:25:46"
     }
   },
   "stats": {
     "tp3": 0,
     "tp2": 0,
     "tp1": 0,
-    "trailing": 0,
+    "trailing": 1,
     "sl": 0
   }
 }
