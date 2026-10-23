@@ -105,16 +105,6 @@ def calc_rsi(closes, period=14):
     rs = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + rs))
 
-def calc_atr(highs, lows, closes, period=14):
-    if len(closes) < period + 1:
-        return closes[-1] * 0.02
-    tr_list = []
-    for i in range(1, len(closes)):
-        h, l, pc = highs[i], lows[i], closes[i-1]
-        tr = max(h - l, abs(h - pc), abs(l - pc))
-        tr_list.append(tr)
-    return sum(tr_list[-period:]) / period
-
 def calc_bollinger_bands(closes, period=20, std_dev=2):
     if len(closes) < period:
         return closes[-1], closes[-1]
@@ -190,7 +180,7 @@ def get_btc_regime():
         return "NEUTRAL"
 
 # ==========================================
-# 분석 및 시그널 산출
+# 분석 및 시그널 산출 (고승률 · 5% 손절 고정)
 # ==========================================
 def analyze_market(closes, highs, lows, volumes, btc_regime):
     if len(closes) < 50 or len(volumes) < 20:
@@ -205,7 +195,6 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
     
     rsi = calc_rsi(closes, 14)
     prev_rsi = calc_rsi(closes[:-1], 14)
-    atr = calc_atr(highs, lows, closes, 14)
     bb_upper, _ = calc_bollinger_bands(closes, 20, 2)
 
     cur_volume = volumes[-1]
@@ -241,15 +230,16 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         reasons.append("볼린저 밴드 상단 돌파")
 
     if score >= 8:
-        risk_pct = max((atr / price) * 100 * 2.0, 5.0)
+        # 💡 손절 폭 5.0% 칼고정 설정
+        risk_pct = 5.0
         risk_amount = price * (risk_pct / 100)
 
         sl = price - risk_amount
-        tp1 = price + (risk_amount * 2.0)
-        tp2 = price + (risk_amount * 4.0)
+        tp1 = price + (risk_amount * 1.2)  # 약 +6.0% 목표 (빠른 익절)
+        tp2 = price + (risk_amount * 2.2)  # 약 +11.0% 목표
 
         is_high_momentum = (vol_ratio >= 3.0 and score >= 10)
-        tp3 = price + (risk_amount * 7.0) if is_high_momentum else None
+        tp3 = price + (risk_amount * 3.5) if is_high_momentum else None  # 약 +17.5% 목표
 
         return {
             "price": price, "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3,
@@ -257,7 +247,7 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
             "tp1_pct": ((tp1 - price) / price) * 100,
             "tp2_pct": ((tp2 - price) / price) * 100,
             "tp3_pct": (((tp3 - price) / price) * 100) if tp3 else None,
-            "sl_pct": ((sl - price) / price) * 100,
+            "sl_pct": -risk_pct,
             "rsi": rsi, "score": score, "reasons": reasons
         }
     return None
@@ -268,7 +258,7 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
 def close_position(st, coin, info, outcome, price):
     record = {
         "symbol": coin,
-        "outcome": outcome, # tp3, tp2_end, trailing, tp1_end, initial_sl
+        "outcome": outcome, 
         "entry": info["entry"],
         "exit": price,
         "time": now()
@@ -276,7 +266,8 @@ def close_position(st, coin, info, outcome, price):
     st["history"].append(record)
     st["history"] = st["history"][-1000:]
     
-    del st["positions"][coin]
+    if coin in st["positions"]:
+        del st["positions"][coin]
     
     labels = {
         "tp3": "TP3 목표 도달 (승)",
@@ -306,7 +297,7 @@ def now_kst_str():
     return datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S KST')
 
 # ==========================================
-# 포지션 감시 로직
+# 포지션 감시 로직 (고속 트레일링 적용)
 # ==========================================
 def monitor_positions(st):
     positions = st["positions"]
@@ -326,17 +317,17 @@ def monitor_positions(st):
         cur_price = ticker['price']
         entry = info.get("entry", cur_price)
         sl = info.get("sl", entry * 0.95)
-        tp1 = info.get("tp1", entry * 1.10)
-        tp2 = info.get("tp2", entry * 1.20)
+        tp1 = info.get("tp1", entry * 1.06)
+        tp2 = info.get("tp2", entry * 1.11)
         tp3 = info.get("tp3", None)
         max_tp_hit = info.get("max_tp_hit", 0)
         
         highest_price = max(info.get("highest_price", entry), cur_price)
         info["highest_price"] = highest_price
 
-        # 1. 트레일링 스탑 체크
+        # 💡 초고속 트레일링 스탑: +3.0% 이상 상승 후 고점 대비 -1.5% 밀리면 칼같이 익절
         peak_profit_pct = ((highest_price - entry) / entry) * 100
-        if peak_profit_pct >= 5.0 and cur_price <= highest_price * (1 - 0.025):
+        if peak_profit_pct >= 3.0 and cur_price <= highest_price * (1 - 0.015):
             close_position(st, coin, info, "trailing", cur_price)
             has_changed = True
             continue
@@ -353,7 +344,7 @@ def monitor_positions(st):
             has_changed = True
             continue
 
-        # 4. 손절가 도달 체크
+        # 4. 손절가 도달 체크 (-5.0%)
         elif cur_price <= sl:
             if max_tp_hit == 1:
                 close_position(st, coin, info, "tp1_end", cur_price) # 무 (1차 본전 종료)
@@ -365,7 +356,7 @@ def monitor_positions(st):
         # 5. TP1 도달 처리
         elif cur_price >= tp1 and max_tp_hit < 1:
             info["max_tp_hit"] = 1
-            info["sl"] = entry  # 본전 상향
+            info["sl"] = entry  # 본전 상향 (무조건 원금 방어)
             has_changed = True
             upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
             profit_pct = ((cur_price - entry) / entry) * 100
@@ -411,7 +402,7 @@ def send_status_briefing(st):
     rate = 100 * wins / decisive_total if decisive_total > 0 else 0.0
 
     msg = (
-        f"📊 <b>목표 도달 후 추적 종료 분류 통계 (승무패 시스템)</b>\n"
+        f"📊 <b>목표 도달 후 추적 종료 분류 통계 (고승률 V15.7)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"총 종료 시그널: <b>{total}건</b>\n\n"
         f"🎯 TP3 종료 (승): {counts['tp3']}건\n"
@@ -456,7 +447,7 @@ def send_status_briefing(st):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V15.6 (W/D/L SYSTEM)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V15.7 (HIGH WIN-RATE & 5% SL)...")
     print("=" * 55)
 
     st = load_state()
@@ -497,7 +488,7 @@ def main():
                 tp3 = result["tp3"]
 
                 upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin_symbol}"
-                target_type_str = "🔥 대폭발 타겟 (TP3 포함)" if result["is_high_momentum"] else "⚖️ 일반 타겟 (TP2 익절 완결)"
+                target_type_str = "🔥 고승률 주도주 (빠른 익절)" if result["is_high_momentum"] else "⚖️ 일반 고승률 타겟"
 
                 msg = (
                     f"🟢 <b>[코인 현물] 고승률 매수 시그널 (점수: {result['score']}점)</b>\n"
@@ -516,7 +507,7 @@ def main():
                     msg += f"🎯 <b>3차 목표가 (TP3)</b> : <code>₩{format_price(tp3)}</code> (<b>+{result['tp3_pct']:.1f}%</b>)\n"
 
                 msg += (
-                    f"🛡 <b>손절가 (SL)</b> : <code>₩{format_price(sl)}</code> ({result['sl_pct']:.1f}%)\n"
+                    f"🛡 <b>손절가 (SL)</b> : <code>₩{format_price(sl)}</code> (-5.0%)\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"⚙️ <b>포착 조건</b> : {', '.join(result['reasons'])}\n"
                     f"📈 <a href=\"{upbit_link}\"><b>[업비트 거래소 바로가기]</b></a>\n"
