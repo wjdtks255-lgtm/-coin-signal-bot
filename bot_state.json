@@ -1,5 +1,5 @@
 {
-  "btc_regime": "BEARISH",
+  "btc_regime": "NEUTRAL",
   "positions": {
     "DOGE": {
       "entry": 108.0,
@@ -17,7 +17,7 @@
       "tp1": 287.26,
       "tp2": 300.81,
       "tp3": null,
-      "highest_price": 281.0,
+      "highest_price": 282.0,
       "max_tp_hit": 0,
       "time": "2026-10-23 22:25:47 KST"
     },
@@ -72,14 +72,14 @@
       "time": "2026-10-24 01:40:49 KST"
     },
     "BFC": {
-      "entry": 38.3,
-      "sl": 36.385,
-      "tp1": 40.598,
-      "tp2": 42.513,
-      "tp3": 45.0025,
-      "highest_price": 38.3,
+      "entry": 46.2,
+      "sl": 43.89,
+      "tp1": 48.972,
+      "tp2": 51.282000000000004,
+      "tp3": null,
+      "highest_price": 46.2,
       "max_tp_hit": 0,
-      "time": "2026-10-24 01:55:37 KST"
+      "time": "2026-10-24 02:05:40 KST"
     }
   },
   "stats": {
@@ -180,6 +180,13 @@
       "entry": 95.8,
       "exit": 100.0,
       "time": "2026-10-24 01:40:38 KST"
+    },
+    {
+      "symbol": "BFC",
+      "outcome": "tp3",
+      "entry": 38.3,
+      "exit": 46.2,
+      "time": "2026-10-24 02:05:33 KST"
     }
   ]
 }
