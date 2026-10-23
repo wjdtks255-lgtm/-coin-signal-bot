@@ -180,7 +180,7 @@ def get_btc_regime():
         return "NEUTRAL"
 
 # ==========================================
-# 분석 및 시그널 산출 (고승률 · 5% 손절 고정)
+# 분석 및 시그널 산출
 # ==========================================
 def analyze_market(closes, highs, lows, volumes, btc_regime):
     if len(closes) < 50 or len(volumes) < 20:
@@ -230,16 +230,15 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         reasons.append("볼린저 밴드 상단 돌파")
 
     if score >= 8:
-        # 💡 손절 폭 5.0% 칼고정 설정
         risk_pct = 5.0
         risk_amount = price * (risk_pct / 100)
 
         sl = price - risk_amount
-        tp1 = price + (risk_amount * 1.2)  # 약 +6.0% 목표 (빠른 익절)
-        tp2 = price + (risk_amount * 2.2)  # 약 +11.0% 목표
+        tp1 = price + (risk_amount * 1.2)
+        tp2 = price + (risk_amount * 2.2)
 
         is_high_momentum = (vol_ratio >= 3.0 and score >= 10)
-        tp3 = price + (risk_amount * 3.5) if is_high_momentum else None  # 약 +17.5% 목표
+        tp3 = price + (risk_amount * 3.5) if is_high_momentum else None
 
         return {
             "price": price, "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3,
@@ -297,7 +296,7 @@ def now_kst_str():
     return datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S KST')
 
 # ==========================================
-# 포지션 감시 로직 (고속 트레일링 적용)
+# 포지션 감시 로직 (손절가 우선 검사 패치)
 # ==========================================
 def monitor_positions(st):
     positions = st["positions"]
@@ -325,38 +324,38 @@ def monitor_positions(st):
         highest_price = max(info.get("highest_price", entry), cur_price)
         info["highest_price"] = highest_price
 
-        # 💡 초고속 트레일링 스탑: +3.0% 이상 상승 후 고점 대비 -1.5% 밀리면 칼같이 익절
-        peak_profit_pct = ((highest_price - entry) / entry) * 100
-        if peak_profit_pct >= 3.0 and cur_price <= highest_price * (1 - 0.015):
-            close_position(st, coin, info, "trailing", cur_price)
-            has_changed = True
-            continue
-
-        # 2. TP3 최종 완결 (승)
-        if tp3 and cur_price >= tp3:
-            close_position(st, coin, info, "tp3", cur_price)
-            has_changed = True
-            continue
-
-        # 3. TP2 완결 (승)
-        if cur_price >= tp2 and (not tp3 or max_tp_hit == 2):
-            close_position(st, coin, info, "tp2_end", cur_price)
-            has_changed = True
-            continue
-
-        # 4. 손절가 도달 체크 (-5.0%)
-        elif cur_price <= sl:
-            if max_tp_hit == 1:
+        # 💡 1. 손절가 도달 체크 (최우선 순위: 손실 방어)
+        if cur_price <= sl:
+            if max_tp_hit >= 1:
                 close_position(st, coin, info, "tp1_end", cur_price) # 무 (1차 본전 종료)
             else:
                 close_position(st, coin, info, "initial_sl", cur_price) # 패 (초기 손절)
             has_changed = True
             continue
 
+        # 💡 2. TP3 최종 완결 (승)
+        if tp3 and cur_price >= tp3:
+            close_position(st, coin, info, "tp3", cur_price)
+            has_changed = True
+            continue
+
+        # 💡 3. TP2 완결 (승)
+        if cur_price >= tp2 and (not tp3 or max_tp_hit == 2):
+            close_position(st, coin, info, "tp2_end", cur_price)
+            has_changed = True
+            continue
+
+        # 💡 4. 트레일링 스탑 체크 (반드시 진입가보다 높은 수익 상태일 때만 익절 인정!)
+        peak_profit_pct = ((highest_price - entry) / entry) * 100
+        if peak_profit_pct >= 3.0 and cur_price > entry and cur_price <= highest_price * (1 - 0.015):
+            close_position(st, coin, info, "trailing", cur_price)
+            has_changed = True
+            continue
+
         # 5. TP1 도달 처리
         elif cur_price >= tp1 and max_tp_hit < 1:
             info["max_tp_hit"] = 1
-            info["sl"] = entry  # 본전 상향 (무조건 원금 방어)
+            info["sl"] = entry  # 본전 상향
             has_changed = True
             upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
             profit_pct = ((cur_price - entry) / entry) * 100
@@ -402,7 +401,7 @@ def send_status_briefing(st):
     rate = 100 * wins / decisive_total if decisive_total > 0 else 0.0
 
     msg = (
-        f"📊 <b>목표 도달 후 추적 종료 분류 통계 (고승률 V15.7)</b>\n"
+        f"📊 <b>목표 도달 후 추적 종료 분류 통계 (V15.8 패치완료)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"총 종료 시그널: <b>{total}건</b>\n\n"
         f"🎯 TP3 종료 (승): {counts['tp3']}건\n"
@@ -447,17 +446,15 @@ def send_status_briefing(st):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V15.7 (HIGH WIN-RATE & 5% SL)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V15.8 (SL BUGFIX)...")
     print("=" * 55)
 
     st = load_state()
     btc_regime = get_btc_regime()
     st["btc_regime"] = btc_regime
 
-    # 1. 보유 포지션 감시 및 청산 처리
     pos_changed = monitor_positions(st)
     
-    # 2. 신규 시그널 스캔
     new_signal_caught = False
     if len(st["positions"]) < MAX_POSITIONS:
         markets = get_krw_markets()
@@ -517,19 +514,4 @@ def main():
                 telegram(msg)
 
                 st["positions"][coin_symbol] = {
-                    "entry": price, "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3,
-                    "highest_price": price, "max_tp_hit": 0, "time": now_kst_str()
-                }
-                time.sleep(1)
-
-                if len(st["positions"]) >= MAX_POSITIONS:
-                    break
-
-    save_state(st)
-
-    # 3. 변동 발생 시에만 승무패 통계 및 상태 브리핑 전송
-    if pos_changed or new_signal_caught:
-        send_status_briefing(st)
-
-if __name__ == "__main__":
-    main()
+                    "entry": price, "sl": sl, "tp1": tp1, "tp2": tp2,
