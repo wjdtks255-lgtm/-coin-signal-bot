@@ -1,5 +1,5 @@
 {
-  "btc_regime": "BEARISH",
+  "btc_regime": "NEUTRAL",
   "positions": {
     "BFC": {
       "entry": 35.9,
@@ -37,9 +37,19 @@
       "tp1": 342.38,
       "tp2": 358.53000000000003,
       "tp3": null,
-      "highest_price": 324.0,
+      "highest_price": 330.0,
       "max_tp_hit": 0,
       "time": "2026-10-23 22:13:42 KST"
+    },
+    "ENA": {
+      "entry": 271.0,
+      "sl": 257.45,
+      "tp1": 287.26,
+      "tp2": 300.81,
+      "tp3": null,
+      "highest_price": 271.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-23 22:25:47 KST"
     }
   },
   "stats": {
