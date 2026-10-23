@@ -183,7 +183,7 @@ def get_btc_regime():
         return "NEUTRAL"
 
 # ==========================================
-# 분석 및 시그널 산출 (고정밀 70% 승률 타겟: 최소 점수 9점)
+# 분석 및 시그널 산출 (밸런스형: 점수 8점 이상으로 완화)
 # ==========================================
 def analyze_market(closes, highs, lows, volumes, btc_regime):
     if len(closes) < 50 or len(volumes) < 20:
@@ -232,8 +232,8 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         score += 2
         reasons.append("볼린저 밴드 상단 돌파")
 
-    # 💡 70%대 승률 유지를 위해 진입 커트라인을 8점에서 9점으로 엄격 상향
-    if score >= 9:
+    # 💡 시그널 포착력을 높이기 위해 커트라인을 다시 8점으로 조정
+    if score >= 8:
         risk_pct = 5.0
         risk_amount = price * (risk_pct / 100)
 
@@ -402,7 +402,7 @@ def send_status_briefing(st):
     rate = 100 * wins / decisive_total if decisive_total > 0 else 0.0
 
     msg = (
-        f"📊 <b>목표 도달 후 추적 종료 분류 통계 (V16.0 고정밀)</b>\n"
+        f"📊 <b>목표 도달 후 추적 종료 분류 통계 (V16.1 밸런스)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"총 종료 시그널: <b>{total}건</b>\n\n"
         f"🎯 TP3 종료 (승): {counts['tp3']}건\n"
@@ -447,7 +447,7 @@ def send_status_briefing(st):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V16.0 (70% WIN-RATE HIGH PRECISION)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V16.1 (BALANCED MODE)...")
     print("=" * 55)
 
     st = load_state()
@@ -486,7 +486,7 @@ def main():
                 tp3 = result["tp3"]
 
                 upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin_symbol}"
-                target_type_str = "🔥 고정밀 주도주 (승률 70% 최적화)" if result["is_high_momentum"] else "⚖️ 고정밀 일반 타겟"
+                target_type_str = "🔥 주도주 포착 (균형 모드)" if result["is_high_momentum"] else "⚖️ 일반 타겟 포착"
 
                 msg = (
                     f"🟢 <b>[코인 현물] 고승률 매수 시그널 (점수: {result['score']}점)</b>\n"
