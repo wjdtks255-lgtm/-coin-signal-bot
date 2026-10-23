@@ -11,16 +11,6 @@
       "max_tp_hit": 0,
       "time": "2026-10-23 17:55:53"
     },
-    "ARK": {
-      "entry": 294.0,
-      "sl": 279.3,
-      "tp1": 311.64,
-      "tp2": 326.34000000000003,
-      "tp3": null,
-      "highest_price": 310.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-23 22:13:34 KST"
-    },
     "ENA": {
       "entry": 271.0,
       "sl": 257.45,
@@ -61,25 +51,35 @@
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
     },
-    "IRYS": {
-      "entry": 80.7,
-      "sl": 76.665,
-      "tp1": 85.542,
-      "tp2": 89.577,
+    "BIRB": {
+      "entry": 125.0,
+      "sl": 118.75,
+      "tp1": 132.5,
+      "tp2": 138.75,
       "tp3": null,
-      "highest_price": 84.5,
+      "highest_price": 125.0,
       "max_tp_hit": 0,
-      "time": "2026-10-24 00:35:39 KST"
+      "time": "2026-10-24 00:55:40 KST"
+    },
+    "ARK": {
+      "entry": 303.0,
+      "sl": 287.85,
+      "tp1": 321.18,
+      "tp2": 336.33,
+      "tp3": null,
+      "highest_price": 303.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 00:55:44 KST"
     },
     "UP2": {
-      "entry": 103.0,
-      "sl": 97.85,
-      "tp1": 109.18,
-      "tp2": 114.33,
+      "entry": 95.8,
+      "sl": 91.00999999999999,
+      "tp1": 101.548,
+      "tp2": 106.338,
       "tp3": null,
-      "highest_price": 103.0,
+      "highest_price": 95.8,
       "max_tp_hit": 0,
-      "time": "2026-10-24 00:45:44 KST"
+      "time": "2026-10-24 00:55:48 KST"
     }
   },
   "stats": {
@@ -145,6 +145,27 @@
       "entry": 118.0,
       "exit": 132.0,
       "time": "2026-10-24 00:45:37 KST"
+    },
+    {
+      "symbol": "ARK",
+      "outcome": "trailing",
+      "entry": 294.0,
+      "exit": 303.0,
+      "time": "2026-10-24 00:55:34 KST"
+    },
+    {
+      "symbol": "IRYS",
+      "outcome": "trailing",
+      "entry": 80.7,
+      "exit": 83.0,
+      "time": "2026-10-24 00:55:35 KST"
+    },
+    {
+      "symbol": "UP2",
+      "outcome": "initial_sl",
+      "entry": 103.0,
+      "exit": 96.4,
+      "time": "2026-10-24 00:55:35 KST"
     }
   ]
 }
