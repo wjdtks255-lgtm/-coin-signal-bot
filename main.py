@@ -194,8 +194,6 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
     if len(closes) < 50 or len(volumes) < 20:
         return None
 
-    # 💡 하락장(BEARISH) 매수 차단 필터 제거됨 (상시 스캔 활성화)
-
     ema20_list = calc_ema(closes, 20)
     ema50_list = calc_ema(closes, 50)
     
