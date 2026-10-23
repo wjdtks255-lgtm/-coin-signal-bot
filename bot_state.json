@@ -50,16 +50,6 @@
       "highest_price": 140400.0,
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
-    },
-    "DOS": {
-      "entry": 377.0,
-      "sl": 358.15,
-      "tp1": 399.62,
-      "tp2": 418.47,
-      "tp3": null,
-      "highest_price": 396.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 02:50:44 KST"
     }
   },
   "stats": {
@@ -195,6 +185,13 @@
       "entry": 303.0,
       "exit": 287.0,
       "time": "2026-10-24 02:40:40 KST"
+    },
+    {
+      "symbol": "DOS",
+      "outcome": "initial_sl",
+      "entry": 377.0,
+      "exit": 355.0,
+      "time": "2026-10-24 03:35:35 KST"
     }
   ]
 }
