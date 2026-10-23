@@ -27,6 +27,9 @@ HEADERS = {
 def now():
     return datetime.now(KST)
 
+def now_kst_str():
+    return datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S KST')
+
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
@@ -260,7 +263,7 @@ def close_position(st, coin, info, outcome, price):
         "outcome": outcome, 
         "entry": info["entry"],
         "exit": price,
-        "time": now()
+        "time": now_kst_str() # 💡 datetime 객체 대신 문자열 저장으로 JSON 에러 해결
     }
     st["history"].append(record)
     st["history"] = st["history"][-1000:]
@@ -292,9 +295,6 @@ def close_position(st, coin, info, outcome, price):
     telegram(msg)
     save_state(st)
 
-def now_kst_str():
-    return datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S KST')
-
 # ==========================================
 # 포지션 감시 로직 (손절가 우선 검사 패치)
 # ==========================================
@@ -324,7 +324,7 @@ def monitor_positions(st):
         highest_price = max(info.get("highest_price", entry), cur_price)
         info["highest_price"] = highest_price
 
-        # 💡 1. 손절가 도달 체크 (최우선 순위: 손실 방어)
+        # 1. 손절가 도달 체크 (최우선 순위: 손실 방어)
         if cur_price <= sl:
             if max_tp_hit >= 1:
                 close_position(st, coin, info, "tp1_end", cur_price) # 무 (1차 본전 종료)
@@ -333,19 +333,19 @@ def monitor_positions(st):
             has_changed = True
             continue
 
-        # 💡 2. TP3 최종 완결 (승)
+        # 2. TP3 최종 완결 (승)
         if tp3 and cur_price >= tp3:
             close_position(st, coin, info, "tp3", cur_price)
             has_changed = True
             continue
 
-        # 💡 3. TP2 완결 (승)
+        # 3. TP2 완결 (승)
         if cur_price >= tp2 and (not tp3 or max_tp_hit == 2):
             close_position(st, coin, info, "tp2_end", cur_price)
             has_changed = True
             continue
 
-        # 💡 4. 트레일링 스탑 체크 (반드시 진입가보다 높은 수익 상태일 때만 익절 인정!)
+        # 4. 트레일링 스탑 체크 (진입가보다 높은 수익 상태일 때만)
         peak_profit_pct = ((highest_price - entry) / entry) * 100
         if peak_profit_pct >= 3.0 and cur_price > entry and cur_price <= highest_price * (1 - 0.015):
             close_position(st, coin, info, "trailing", cur_price)
@@ -401,7 +401,7 @@ def send_status_briefing(st):
     rate = 100 * wins / decisive_total if decisive_total > 0 else 0.0
 
     msg = (
-        f"📊 <b>목표 도달 후 추적 종료 분류 통계 (V15.8 패치완료)</b>\n"
+        f"📊 <b>목표 도달 후 추적 종료 분류 통계 (V15.9 수정완료)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"총 종료 시그널: <b>{total}건</b>\n\n"
         f"🎯 TP3 종료 (승): {counts['tp3']}건\n"
@@ -446,7 +446,7 @@ def send_status_briefing(st):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V15.8 (SL BUGFIX)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V15.9 (DATETIME JSON FIX)...")
     print("=" * 55)
 
     st = load_state()
@@ -514,4 +514,18 @@ def main():
                 telegram(msg)
 
                 st["positions"][coin_symbol] = {
-                    "entry": price, "sl": sl, "tp1": tp1, "tp2": tp2,
+                    "entry": price, "sl": sl, "tp1": tp1, "tp2": tp2, "tp3": tp3,
+                    "highest_price": price, "max_tp_hit": 0, "time": now_kst_str()
+                }
+                time.sleep(1)
+
+                if len(st["positions"]) >= MAX_POSITIONS:
+                    break
+
+    save_state(st)
+
+    if pos_changed or new_signal_caught:
+        send_status_briefing(st)
+
+if __name__ == "__main__":
+    main()
