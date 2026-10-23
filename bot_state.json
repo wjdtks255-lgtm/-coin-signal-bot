@@ -61,15 +61,15 @@
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
     },
-    "IRYS": {
-      "entry": 70.0,
-      "sl": 66.5,
-      "tp1": 74.2,
-      "tp2": 77.7,
+    "BIRB": {
+      "entry": 105.0,
+      "sl": 99.75,
+      "tp1": 111.3,
+      "tp2": 116.55,
       "tp3": null,
-      "highest_price": 70.0,
+      "highest_price": 105.0,
       "max_tp_hit": 0,
-      "time": "2026-10-24 00:25:36 KST"
+      "time": "2026-10-24 00:30:48 KST"
     }
   },
   "stats": {
@@ -114,6 +114,13 @@
       "entry": 61.0,
       "exit": 70.3,
       "time": "2026-10-24 00:20:33 KST"
+    },
+    {
+      "symbol": "IRYS",
+      "outcome": "tp2_end",
+      "entry": 70.0,
+      "exit": 81.8,
+      "time": "2026-10-24 00:30:42 KST"
     }
   ]
 }
