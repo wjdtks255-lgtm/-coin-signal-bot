@@ -50,6 +50,16 @@
       "highest_price": 310.0,
       "max_tp_hit": 0,
       "time": "2026-10-24 04:35:40 KST"
+    },
+    "UP2": {
+      "entry": 127.0,
+      "sl": 120.65,
+      "tp1": 134.62,
+      "tp2": 140.97,
+      "tp3": null,
+      "highest_price": 127.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 04:50:39 KST"
     }
   },
   "stats": {
