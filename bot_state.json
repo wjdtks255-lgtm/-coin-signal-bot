@@ -1,5 +1,5 @@
 {
-  "btc_regime": "BEARISH",
+  "btc_regime": "NEUTRAL",
   "positions": {
     "BFC": {
       "entry": 35.9,
@@ -27,7 +27,7 @@
       "tp1": 311.64,
       "tp2": 326.34000000000003,
       "tp3": null,
-      "highest_price": 299.0,
+      "highest_price": 300.0,
       "max_tp_hit": 0,
       "time": "2026-10-23 22:13:34 KST"
     },
@@ -37,7 +37,7 @@
       "tp1": 342.38,
       "tp2": 358.53000000000003,
       "tp3": null,
-      "highest_price": 330.0,
+      "highest_price": 331.0,
       "max_tp_hit": 0,
       "time": "2026-10-23 22:13:42 KST"
     },
@@ -47,7 +47,7 @@
       "tp1": 287.26,
       "tp2": 300.81,
       "tp3": null,
-      "highest_price": 271.0,
+      "highest_price": 274.0,
       "max_tp_hit": 0,
       "time": "2026-10-23 22:25:47 KST"
     },
@@ -57,9 +57,29 @@
       "tp1": 115899340.0,
       "tp2": 121366290.0,
       "tp3": null,
-      "highest_price": 109339000.0,
+      "highest_price": 109474000.0,
       "max_tp_hit": 0,
       "time": "2026-10-23 22:30:50 KST"
+    },
+    "ETH": {
+      "entry": 3225000.0,
+      "sl": 3063750.0,
+      "tp1": 3418500.0,
+      "tp2": 3579750.0,
+      "tp3": null,
+      "highest_price": 3225000.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-23 22:45:42 KST"
+    },
+    "SOL": {
+      "entry": 140100.0,
+      "sl": 133095.0,
+      "tp1": 148506.0,
+      "tp2": 155511.0,
+      "tp3": null,
+      "highest_price": 140100.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-23 22:45:49 KST"
     }
   },
   "stats": {
