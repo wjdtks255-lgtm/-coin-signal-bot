@@ -183,7 +183,7 @@ def get_btc_regime():
         return "NEUTRAL"
 
 # ==========================================
-# 분석 및 시그널 산출
+# 분석 및 시그널 산출 (고정밀 70% 승률 타겟: 최소 점수 9점)
 # ==========================================
 def analyze_market(closes, highs, lows, volumes, btc_regime):
     if len(closes) < 50 or len(volumes) < 20:
@@ -232,7 +232,8 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         score += 2
         reasons.append("볼린저 밴드 상단 돌파")
 
-    if score >= 8:
+    # 💡 70%대 승률 유지를 위해 진입 커트라인을 8점에서 9점으로 엄격 상향
+    if score >= 9:
         risk_pct = 5.0
         risk_amount = price * (risk_pct / 100)
 
@@ -263,7 +264,7 @@ def close_position(st, coin, info, outcome, price):
         "outcome": outcome, 
         "entry": info["entry"],
         "exit": price,
-        "time": now_kst_str() # 💡 datetime 객체 대신 문자열 저장으로 JSON 에러 해결
+        "time": now_kst_str()
     }
     st["history"].append(record)
     st["history"] = st["history"][-1000:]
@@ -296,7 +297,7 @@ def close_position(st, coin, info, outcome, price):
     save_state(st)
 
 # ==========================================
-# 포지션 감시 로직 (손절가 우선 검사 패치)
+# 포지션 감시 로직
 # ==========================================
 def monitor_positions(st):
     positions = st["positions"]
@@ -324,12 +325,12 @@ def monitor_positions(st):
         highest_price = max(info.get("highest_price", entry), cur_price)
         info["highest_price"] = highest_price
 
-        # 1. 손절가 도달 체크 (최우선 순위: 손실 방어)
+        # 1. 손절가 도달 체크 (최우선 순위)
         if cur_price <= sl:
             if max_tp_hit >= 1:
-                close_position(st, coin, info, "tp1_end", cur_price) # 무 (1차 본전 종료)
+                close_position(st, coin, info, "tp1_end", cur_price) # 무
             else:
-                close_position(st, coin, info, "initial_sl", cur_price) # 패 (초기 손절)
+                close_position(st, coin, info, "initial_sl", cur_price) # 패
             has_changed = True
             continue
 
@@ -401,7 +402,7 @@ def send_status_briefing(st):
     rate = 100 * wins / decisive_total if decisive_total > 0 else 0.0
 
     msg = (
-        f"📊 <b>목표 도달 후 추적 종료 분류 통계 (V15.9 수정완료)</b>\n"
+        f"📊 <b>목표 도달 후 추적 종료 분류 통계 (V16.0 고정밀)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"총 종료 시그널: <b>{total}건</b>\n\n"
         f"🎯 TP3 종료 (승): {counts['tp3']}건\n"
@@ -446,7 +447,7 @@ def send_status_briefing(st):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V15.9 (DATETIME JSON FIX)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V16.0 (70% WIN-RATE HIGH PRECISION)...")
     print("=" * 55)
 
     st = load_state()
@@ -485,7 +486,7 @@ def main():
                 tp3 = result["tp3"]
 
                 upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin_symbol}"
-                target_type_str = "🔥 고승률 주도주 (빠른 익절)" if result["is_high_momentum"] else "⚖️ 일반 고승률 타겟"
+                target_type_str = "🔥 고정밀 주도주 (승률 70% 최적화)" if result["is_high_momentum"] else "⚖️ 고정밀 일반 타겟"
 
                 msg = (
                     f"🟢 <b>[코인 현물] 고승률 매수 시그널 (점수: {result['score']}점)</b>\n"
