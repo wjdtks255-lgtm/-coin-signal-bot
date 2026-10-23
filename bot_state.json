@@ -41,35 +41,25 @@
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
     },
-    "ERA": {
-      "entry": 109.0,
-      "sl": 103.55,
-      "tp1": 115.54,
-      "tp2": 120.99000000000001,
-      "tp3": null,
-      "highest_price": 110.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 05:30:58 KST"
-    },
-    "NCT": {
-      "entry": 19.3,
-      "sl": 19.3,
-      "tp1": 20.458000000000002,
-      "tp2": 21.423000000000002,
-      "tp3": null,
-      "highest_price": 21.3,
-      "max_tp_hit": 1,
-      "time": "2026-10-24 07:50:54 KST"
-    },
     "IN": {
       "entry": 45.9,
       "sl": 43.605,
       "tp1": 48.653999999999996,
       "tp2": 50.949,
       "tp3": null,
-      "highest_price": 45.9,
+      "highest_price": 47.2,
       "max_tp_hit": 0,
       "time": "2026-10-24 08:01:02 KST"
+    },
+    "NCT": {
+      "entry": 20.5,
+      "sl": 19.475,
+      "tp1": 21.73,
+      "tp2": 22.755,
+      "tp3": null,
+      "highest_price": 20.5,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 08:05:54 KST"
     }
   },
   "stats": {
@@ -268,6 +258,20 @@
       "entry": 45.4,
       "exit": 46.0,
       "time": "2026-10-24 08:00:50 KST"
+    },
+    {
+      "symbol": "ERA",
+      "outcome": "initial_sl",
+      "entry": 109.0,
+      "exit": 103.0,
+      "time": "2026-10-24 08:05:37 KST"
+    },
+    {
+      "symbol": "NCT",
+      "outcome": "trailing",
+      "entry": 19.3,
+      "exit": 20.4,
+      "time": "2026-10-24 08:05:37 KST"
     }
   ]
 }
