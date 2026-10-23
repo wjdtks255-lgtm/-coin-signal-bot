@@ -51,16 +51,6 @@
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
     },
-    "BIRB": {
-      "entry": 125.0,
-      "sl": 118.75,
-      "tp1": 132.5,
-      "tp2": 138.75,
-      "tp3": null,
-      "highest_price": 131.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 00:55:40 KST"
-    },
     "ARK": {
       "entry": 303.0,
       "sl": 287.85,
@@ -77,7 +67,7 @@
       "tp1": 101.548,
       "tp2": 106.338,
       "tp3": null,
-      "highest_price": 99.9,
+      "highest_price": 101.0,
       "max_tp_hit": 0,
       "time": "2026-10-24 00:55:48 KST"
     }
@@ -166,6 +156,13 @@
       "entry": 103.0,
       "exit": 96.4,
       "time": "2026-10-24 00:55:35 KST"
+    },
+    {
+      "symbol": "BIRB",
+      "outcome": "tp2_end",
+      "entry": 125.0,
+      "exit": 139.0,
+      "time": "2026-10-24 01:20:34 KST"
     }
   ]
 }
