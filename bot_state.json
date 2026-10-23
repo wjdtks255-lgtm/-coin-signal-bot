@@ -23,11 +23,10 @@
     }
   },
   "stats": {
-    "wins": 0,
-    "breakeven": 1,
-    "losses": 1,
-    "sl": 6,
-    "time_cut": 1,
-    "tp3": 1
+    "tp3": 0,
+    "tp2": 0,
+    "tp1": 0,
+    "trailing": 0,
+    "sl": 0
   }
 }
