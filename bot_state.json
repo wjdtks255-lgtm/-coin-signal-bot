@@ -50,16 +50,6 @@
       "highest_price": 140400.0,
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
-    },
-    "ARK": {
-      "entry": 303.0,
-      "sl": 287.85,
-      "tp1": 321.18,
-      "tp2": 336.33,
-      "tp3": null,
-      "highest_price": 310.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 00:55:44 KST"
     }
   },
   "stats": {
@@ -188,6 +178,13 @@
       "entry": 55.0,
       "exit": 49.0,
       "time": "2026-10-24 02:35:33 KST"
+    },
+    {
+      "symbol": "ARK",
+      "outcome": "initial_sl",
+      "entry": 303.0,
+      "exit": 287.0,
+      "time": "2026-10-24 02:40:40 KST"
     }
   ]
 }
