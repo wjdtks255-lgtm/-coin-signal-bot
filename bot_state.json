@@ -61,16 +61,6 @@
       "max_tp_hit": 0,
       "time": "2026-10-24 00:55:44 KST"
     },
-    "FOLD": {
-      "entry": 79.0,
-      "sl": 75.05,
-      "tp1": 83.74,
-      "tp2": 87.69,
-      "tp3": null,
-      "highest_price": 82.5,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 01:40:49 KST"
-    },
     "BFC": {
       "entry": 55.0,
       "sl": 52.25,
@@ -194,6 +184,13 @@
       "entry": 46.2,
       "exit": 54.6,
       "time": "2026-10-24 02:10:36 KST"
+    },
+    {
+      "symbol": "FOLD",
+      "outcome": "trailing",
+      "entry": 79.0,
+      "exit": 79.1,
+      "time": "2026-10-24 02:15:36 KST"
     }
   ]
 }
