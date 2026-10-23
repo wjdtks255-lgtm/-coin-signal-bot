@@ -1,5 +1,5 @@
 {
-  "btc_regime": "BEARISH",
+  "btc_regime": "NEUTRAL",
   "positions": {
     "DOGE": {
       "entry": 108.0,
@@ -47,7 +47,7 @@
       "tp1": 148506.0,
       "tp2": 155511.0,
       "tp3": null,
-      "highest_price": 140300.0,
+      "highest_price": 140400.0,
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
     },
