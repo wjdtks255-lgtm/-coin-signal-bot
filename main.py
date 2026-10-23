@@ -185,22 +185,7 @@ def get_btc_regime():
         return "NEUTRAL"
 
 def check_btc_regime_shift(current_regime, state):
-    prev_regime = state.get("btc_regime", "NEUTRAL")
-    if current_regime != prev_regime:
-        emoji_map = {
-            "BULLISH": "🚀 (1시간봉 상승세 / 강세장 진입)",
-            "BEARISH": "⚠️ (1시간봉 하락세 / 약세장 진입)",
-            "NEUTRAL": "⚖️ (1시간봉 횡보장 / 보수적 선별 진입)"
-        }
-        msg = (
-            f"🚨 <b>[시황 긴급 알림] 비트코인 1시간봉 추세 전환 포착!</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>이전 추세</b> : <code>{prev_regime}</code>\n"
-            f"• <b>현재 추세</b> : <b>{current_regime}</b> {emoji_map.get(current_regime, '')}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏱ <code>{now().strftime('%Y-%m-%d %H:%M:%S KST')}</code>"
-        )
-        telegram(msg)
+    # 💡 횡보장/하락장 진동으로 인한 스팸 알림을 방지하기 위해 텔레그램 발송 로직 제거
     state["btc_regime"] = current_regime
 
 # ==========================================
@@ -269,7 +254,6 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         tp1 = price + (risk_amount * 2.0)
         tp2 = price + (risk_amount * 4.0)
 
-        # 💡 수급 대폭발(거래량 3배 이상 & 고득점) 종목만 TP3 적용, 일반 종목은 TP2 종료
         is_high_momentum = (vol_ratio >= 3.0 and score >= 10)
         tp3 = price + (risk_amount * 7.0) if is_high_momentum else None
 
@@ -285,7 +269,7 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
     return None
 
 # ==========================================
-# 포지션 감시 및 청산 로직 (상황별 목표가 완결)
+# 포지션 감시 및 청산 로직
 # ==========================================
 def monitor_positions(positions, stats):
     if not positions:
@@ -316,7 +300,7 @@ def monitor_positions(positions, stats):
 
         upbit_link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
 
-        # 📈 1. 트레일링 스탑 체크
+        # 1. 트레일링 스탑 체크
         peak_profit_pct = ((highest_price - entry) / entry) * 100
         if peak_profit_pct >= 5.0 and cur_price <= highest_price * (1 - 0.025):
             stats["trailing"] = stats.get("trailing", 0) + 1
@@ -335,7 +319,7 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 2. TP3 최종 완결 (대폭발 종목만 해당)
+        # 2. TP3 최종 완결
         if tp3 and cur_price >= tp3:
             stats["tp3"] = stats.get("tp3", 0) + 1
             has_changed = True
@@ -352,7 +336,7 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 3. TP2 완결 (일반 종목은 TP2에서 최종 종료)
+        # 3. TP2 완결
         if cur_price >= tp2 and (not tp3 or max_tp_hit == 2):
             stats["tp2"] = stats.get("tp2", 0) + 1
             has_changed = True
@@ -369,7 +353,7 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 4. 손절가 / 본전 스탑 도달 체크
+        # 4. 손절가 도달
         elif cur_price <= sl:
             pnl_pct = ((cur_price - entry) / entry) * 100
             has_changed = True
@@ -393,12 +377,12 @@ def monitor_positions(positions, stats):
             telegram(msg)
             continue
 
-        # 5. 진행 중 TP1 도달 처리
+        # 5. TP1 도달
         elif cur_price >= tp1 and max_tp_hit < 1:
             has_changed = True
             profit_pct = ((cur_price - entry) / entry) * 100
             info["max_tp_hit"] = 1
-            info["sl"] = entry  # 손절가 본전 상향
+            info["sl"] = entry
             msg = (
                 f"🎯 <b>[코인 현물] TP1 목표가 도달! (진행 중)</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -437,7 +421,7 @@ def send_status_briefing(positions, stats):
     win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
 
     msg = (
-        f"📊 <b>시그널 누적 성과 통계 (V15.3)</b>\n"
+        f"📊 <b>시그널 누적 성과 통계 (V15.4)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"<b>총 종료 시그널</b> : <b>{total_closed}건</b>\n\n"
         f"🎯 <b>TP3 종료</b> : {tp3_cnt}건\n"
@@ -483,7 +467,7 @@ def send_status_briefing(positions, stats):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V15.3 (DYNAMIC TARGET)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V15.4 (NO-SPAM REGIME)...")
     print("=" * 55)
 
     default_state = {
@@ -573,7 +557,6 @@ def main():
     state["stats"] = stats
     save_json(STATE_FILE, state)
 
-    # 3. 변동 발생 시에만 리포트 전송
     if pos_changed or new_signal_caught or (set(old_positions.keys()) != set(positions.keys())):
         send_status_briefing(positions, stats)
 
