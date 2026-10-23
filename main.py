@@ -185,18 +185,16 @@ def get_btc_regime():
         return "NEUTRAL"
 
 def check_btc_regime_shift(current_regime, state):
-    # 💡 횡보장/하락장 진동으로 인한 스팸 알림을 방지하기 위해 텔레그램 발송 로직 제거
     state["btc_regime"] = current_regime
 
 # ==========================================
-# 분석 및 시그널 산출 (이원화 목표가)
+# 분석 및 시그널 산출 (하락장 방어 해제 버전)
 # ==========================================
 def analyze_market(closes, highs, lows, volumes, btc_regime):
     if len(closes) < 50 or len(volumes) < 20:
         return None
 
-    if btc_regime == "BEARISH":
-        return None  # 약세장 매수 금지
+    # 💡 하락장(BEARISH) 매수 차단 필터 제거됨 (상시 스캔 활성화)
 
     ema20_list = calc_ema(closes, 20)
     ema50_list = calc_ema(closes, 50)
@@ -243,8 +241,6 @@ def analyze_market(closes, highs, lows, volumes, btc_regime):
         reasons.append("볼린저 밴드 상단 돌파")
 
     min_required_score = 8
-    if btc_regime == "NEUTRAL":
-        min_required_score = 10  # 횡보장 고득점만 허용
 
     if score >= min_required_score:
         risk_pct = max((atr / price) * 100 * 2.0, 5.0)
@@ -421,7 +417,7 @@ def send_status_briefing(positions, stats):
     win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
 
     msg = (
-        f"📊 <b>시그널 누적 성과 통계 (V15.4)</b>\n"
+        f"📊 <b>시그널 누적 성과 통계 (V15.5)</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"<b>총 종료 시그널</b> : <b>{total_closed}건</b>\n\n"
         f"🎯 <b>TP3 종료</b> : {tp3_cnt}건\n"
@@ -467,7 +463,7 @@ def send_status_briefing(positions, stats):
 
 def main():
     print("=" * 55)
-    print("🚀 UPBIT SPOT QUANT SCANNER V15.4 (NO-SPAM REGIME)...")
+    print("🚀 UPBIT SPOT QUANT SCANNER V15.5 (NO-BEARISH-FILTER)...")
     print("=" * 55)
 
     default_state = {
