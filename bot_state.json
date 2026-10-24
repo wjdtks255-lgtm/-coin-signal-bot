@@ -41,16 +41,6 @@
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
     },
-    "ERA": {
-      "entry": 128.0,
-      "sl": 121.6,
-      "tp1": 135.68,
-      "tp2": 142.08,
-      "tp3": null,
-      "highest_price": 129.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 15:15:44 KST"
-    },
     "DOS": {
       "entry": 358.0,
       "sl": 340.1,
@@ -70,16 +60,6 @@
       "highest_price": 208.0,
       "max_tp_hit": 0,
       "time": "2026-10-24 16:15:44 KST"
-    },
-    "BIRB": {
-      "entry": 260.0,
-      "sl": 247.0,
-      "tp1": 275.6,
-      "tp2": 288.6,
-      "tp3": null,
-      "highest_price": 260.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 17:00:49 KST"
     }
   },
   "stats": {
@@ -506,7 +486,26 @@
       "exit": 358.0,
       "pnl_pct": 3.768,
       "time": "2026-10-24 15:45:35 KST"
+    },
+    {
+      "symbol": "ERA",
+      "outcome": "initial_sl",
+      "entry": 128.0,
+      "exit": 117.0,
+      "pnl_pct": -8.594,
+      "time": "2026-10-24 17:05:36 KST"
+    },
+    {
+      "symbol": "BIRB",
+      "outcome": "initial_sl",
+      "entry": 260.0,
+      "exit": 243.0,
+      "pnl_pct": -6.538,
+      "time": "2026-10-24 17:05:37 KST"
     }
   ],
-  "cooldowns": {}
+  "cooldowns": {
+    "ERA": 1792829136.9248245,
+    "BIRB": 1792829137.6731231
+  }
 }
