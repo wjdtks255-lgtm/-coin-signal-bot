@@ -57,9 +57,29 @@
       "tp1": 365.7,
       "tp2": 382.95,
       "tp3": null,
-      "highest_price": 345.0,
+      "highest_price": 349.0,
       "max_tp_hit": 0,
       "time": "2026-10-24 10:40:45 KST"
+    },
+    "QUID": {
+      "entry": 98.0,
+      "sl": 93.1,
+      "tp1": 103.88,
+      "tp2": 108.78,
+      "tp3": 115.15,
+      "highest_price": 98.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 10:45:45 KST"
+    },
+    "LA": {
+      "entry": 86.5,
+      "sl": 82.175,
+      "tp1": 91.69,
+      "tp2": 96.015,
+      "tp3": null,
+      "highest_price": 86.5,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 10:45:48 KST"
     }
   },
   "stats": {
