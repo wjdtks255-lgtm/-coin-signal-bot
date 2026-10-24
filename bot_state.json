@@ -50,6 +50,16 @@
       "highest_price": 210.0,
       "max_tp_hit": 0,
       "time": "2026-10-24 16:15:44 KST"
+    },
+    "ZKC": {
+      "entry": 58.5,
+      "sl": 55.575,
+      "tp1": 62.01,
+      "tp2": 64.935,
+      "tp3": null,
+      "highest_price": 58.5,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 20:35:41 KST"
     }
   },
   "stats": {
