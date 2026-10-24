@@ -41,16 +41,6 @@
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
     },
-    "BFC": {
-      "entry": 47.0,
-      "sl": 44.65,
-      "tp1": 49.82,
-      "tp2": 52.17,
-      "tp3": 55.225,
-      "highest_price": 47.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 10:00:53 KST"
-    },
     "DOS": {
       "entry": 366.0,
       "sl": 347.7,
@@ -80,6 +70,16 @@
       "highest_price": 52.3,
       "max_tp_hit": 0,
       "time": "2026-10-24 10:15:55 KST"
+    },
+    "IRYS": {
+      "entry": 155.0,
+      "sl": 147.25,
+      "tp1": 164.3,
+      "tp2": 172.05,
+      "tp3": 182.125,
+      "highest_price": 155.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 10:30:44 KST"
     }
   },
   "stats": {
@@ -394,6 +394,14 @@
       "exit": 143.0,
       "pnl_pct": -5.921,
       "time": "2026-10-24 10:15:48 KST"
+    },
+    {
+      "symbol": "BFC",
+      "outcome": "initial_sl",
+      "entry": 47.0,
+      "exit": 43.5,
+      "pnl_pct": -7.447,
+      "time": "2026-10-24 10:30:41 KST"
     }
   ]
 }
