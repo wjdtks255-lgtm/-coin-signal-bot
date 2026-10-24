@@ -53,12 +53,12 @@
     },
     "TRUST": {
       "entry": 76.7,
-      "sl": 76.7,
+      "sl": 81.302,
       "tp1": 81.302,
       "tp2": 85.137,
       "tp3": 90.1225,
-      "highest_price": 83.2,
-      "max_tp_hit": 1,
+      "highest_price": 87.2,
+      "max_tp_hit": 2,
       "time": "2026-10-24 18:30:47 KST"
     }
   },
