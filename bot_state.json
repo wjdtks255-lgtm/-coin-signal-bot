@@ -57,9 +57,19 @@
       "tp1": 91.69,
       "tp2": 96.015,
       "tp3": null,
-      "highest_price": 89.6,
+      "highest_price": 90.0,
       "max_tp_hit": 0,
       "time": "2026-10-24 10:45:48 KST"
+    },
+    "IN": {
+      "entry": 71.7,
+      "sl": 68.11500000000001,
+      "tp1": 76.00200000000001,
+      "tp2": 79.587,
+      "tp3": null,
+      "highest_price": 71.7,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 14:30:48 KST"
     }
   },
   "stats": {
