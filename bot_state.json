@@ -62,14 +62,24 @@
       "time": "2026-10-24 10:45:48 KST"
     },
     "IN": {
-      "entry": 68.3,
-      "sl": 68.3,
-      "tp1": 72.398,
-      "tp2": 75.813,
+      "entry": 69.0,
+      "sl": 65.55,
+      "tp1": 73.14,
+      "tp2": 76.59,
       "tp3": null,
-      "highest_price": 74.2,
-      "max_tp_hit": 1,
-      "time": "2026-10-24 14:55:37 KST"
+      "highest_price": 69.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 15:15:41 KST"
+    },
+    "ERA": {
+      "entry": 128.0,
+      "sl": 121.6,
+      "tp1": 135.68,
+      "tp2": 142.08,
+      "tp3": null,
+      "highest_price": 128.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 15:15:44 KST"
     }
   },
   "stats": {
@@ -464,6 +474,14 @@
       "exit": 66.9,
       "pnl_pct": -6.695,
       "time": "2026-10-24 14:45:38 KST"
+    },
+    {
+      "symbol": "IN",
+      "outcome": "trailing",
+      "entry": 68.3,
+      "exit": 69.0,
+      "pnl_pct": 1.025,
+      "time": "2026-10-24 15:15:38 KST"
     }
   ]
 }
