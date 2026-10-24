@@ -26,7 +26,7 @@ def price_fmt(p):
     return f"{p:.4f}"
 
 def load_state():
-    default = {"positions": {}, "history": [], "btc_regime": "NEUTRAL"}
+    default = {"positions": {}, "history": [], "btc_regime": "NEUTRAL", "cooldowns": {}}
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, encoding="utf-8") as f:
@@ -36,6 +36,7 @@ def load_state():
                     data.setdefault(k, v)
                 if not isinstance(data["positions"], dict): data["positions"] = {}
                 if not isinstance(data["history"], list): data["history"] = []
+                if not isinstance(data["cooldowns"], dict): data["cooldowns"] = {}
                 return data
         except Exception as e:
             print("STATE LOAD ERROR:", e)
@@ -236,6 +237,10 @@ def close_position(st, coin, info, outcome, price):
     })
     st["history"] = st["history"][-1000:]
     st["positions"].pop(coin, None)
+    
+    # 💡 청산 시각 기록 (3시간 쿨다운 등록)
+    st.setdefault("cooldowns", {})[coin] = time.time()
+
     link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
     msg = (
         f"📊 <b>[현물 시그널 종료]</b>\n"
@@ -368,7 +373,7 @@ def send_status(st, btc_regime):
 
 def main():
     print("=" * 55)
-    print("UPBIT SPOT QUANT SCANNER V16.2")
+    print("UPBIT SPOT QUANT SCANNER V16.3 (COOLDOWN ADDED)")
     print("시간:", now())
     print("=" * 55)
 
@@ -400,10 +405,20 @@ def main():
         stats["turnover"] = len(candidates)
         print(f"거래대금 필터 통과: {len(candidates)}개 (최소 100억 원)")
 
+        cooldowns = st.setdefault("cooldowns", {})
+        current_time = time.time()
+        COOLDOWN_SECONDS = 3 * 3600  # 3시간 쿨다운
+
         for market, ticker in candidates:
             coin = market.replace("KRW-", "")
+            
+            # 💡 이미 보유 중이거나, 블랙리스트이거나, 3시간 쿨다운 중이면 스킵
             if coin in st["positions"] or coin in EXCLUDED:
                 continue
+            
+            if current_time - cooldowns.get(coin, 0) < COOLDOWN_SECONDS:
+                continue
+
             if len(st["positions"]) >= MAX_POSITIONS:
                 break
 
@@ -448,7 +463,7 @@ def main():
                 f"(+{(r['tp1']/r['price']-1)*100:.1f}%)\n"
                 f"🎯 TP2: ₩{price_fmt(r['tp2'])} "
                 f"(+{(r['tp2']/r['price']-1)*100:.1f}%)\n"
-                f"{tp3_line}"
+                f"{tp3_line}\n"
                 f"🛡 손절가: ₩{price_fmt(r['sl'])} (-5.0%)\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"포착 근거: {', '.join(r['reasons'])}\n"
