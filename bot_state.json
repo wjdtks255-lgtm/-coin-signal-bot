@@ -51,23 +51,13 @@
       "max_tp_hit": 0,
       "time": "2026-10-24 10:40:45 KST"
     },
-    "LA": {
-      "entry": 86.5,
-      "sl": 86.5,
-      "tp1": 91.69,
-      "tp2": 96.015,
-      "tp3": null,
-      "highest_price": 92.4,
-      "max_tp_hit": 1,
-      "time": "2026-10-24 10:45:48 KST"
-    },
     "IN": {
       "entry": 69.0,
       "sl": 65.55,
       "tp1": 73.14,
       "tp2": 76.59,
       "tp3": null,
-      "highest_price": 69.0,
+      "highest_price": 71.2,
       "max_tp_hit": 0,
       "time": "2026-10-24 15:15:41 KST"
     },
@@ -482,6 +472,14 @@
       "exit": 69.0,
       "pnl_pct": 1.025,
       "time": "2026-10-24 15:15:38 KST"
+    },
+    {
+      "symbol": "LA",
+      "outcome": "trailing",
+      "entry": 86.5,
+      "exit": 90.6,
+      "pnl_pct": 4.74,
+      "time": "2026-10-24 15:20:36 KST"
     }
   ]
 }
