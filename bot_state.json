@@ -41,16 +41,6 @@
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
     },
-    "IRYS": {
-      "entry": 119.0,
-      "sl": 113.05,
-      "tp1": 126.14,
-      "tp2": 132.09,
-      "tp3": null,
-      "highest_price": 119.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 09:15:47 KST"
-    },
     "BIRB": {
       "entry": 153.0,
       "sl": 162.18,
@@ -72,14 +62,24 @@
       "time": "2026-10-24 09:15:50 KST"
     },
     "ERA": {
-      "entry": 106.0,
-      "sl": 100.7,
-      "tp1": 112.36,
-      "tp2": 117.66,
+      "entry": 117.0,
+      "sl": 111.15,
+      "tp1": 124.02,
+      "tp2": 129.87,
       "tp3": null,
-      "highest_price": 112.0,
+      "highest_price": 117.0,
       "max_tp_hit": 0,
-      "time": "2026-10-24 09:15:54 KST"
+      "time": "2026-10-24 09:25:36 KST"
+    },
+    "FOLD": {
+      "entry": 79.1,
+      "sl": 75.145,
+      "tp1": 83.84599999999999,
+      "tp2": 87.80099999999999,
+      "tp3": null,
+      "highest_price": 79.1,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 09:25:38 KST"
     }
   },
   "stats": {
@@ -322,6 +322,22 @@
       "exit": 15.1,
       "pnl_pct": -6.79,
       "time": "2026-10-24 09:00:52 KST"
+    },
+    {
+      "symbol": "IRYS",
+      "outcome": "initial_sl",
+      "entry": 119.0,
+      "exit": 111.0,
+      "pnl_pct": -6.723,
+      "time": "2026-10-24 09:25:31 KST"
+    },
+    {
+      "symbol": "ERA",
+      "outcome": "tp2_end",
+      "entry": 106.0,
+      "exit": 118.0,
+      "pnl_pct": 11.321,
+      "time": "2026-10-24 09:25:31 KST"
     }
   ]
 }
