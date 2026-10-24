@@ -50,6 +50,16 @@
       "highest_price": 210.0,
       "max_tp_hit": 0,
       "time": "2026-10-24 16:15:44 KST"
+    },
+    "ERA": {
+      "entry": 141.0,
+      "sl": 133.95,
+      "tp1": 149.46,
+      "tp2": 156.51,
+      "tp3": 165.675,
+      "highest_price": 141.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 22:30:44 KST"
     }
   },
   "stats": {
