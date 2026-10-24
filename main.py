@@ -238,7 +238,6 @@ def close_position(st, coin, info, outcome, price):
     st["history"] = st["history"][-1000:]
     st["positions"].pop(coin, None)
     
-    # 💡 청산 시각 기록 (3시간 쿨다운 등록)
     st.setdefault("cooldowns", {})[coin] = time.time()
 
     link = f"https://upbit.com/exchange?code=CRIX.UPBIT.KRW-{coin}"
@@ -323,7 +322,9 @@ def monitor_positions(st):
             continue
 
         peak_profit = (peak / entry - 1) * 100 if entry else 0
-        if peak_profit >= 3 and cur > entry and cur <= peak * 0.985:
+        
+        # 💡 트레일링 스탑 완화: 최고점 대비 3.0% 이상 하락할 때만 작동 (기존 1.5%에서 완화)
+        if peak_profit >= 3.0 and cur > entry and cur <= peak * (1 - 0.03):
             outcome = "tp2_end" if hit >= 2 else "trailing"
             close_position(st, coin, info, outcome, cur)
             changed = True
@@ -373,7 +374,7 @@ def send_status(st, btc_regime):
 
 def main():
     print("=" * 55)
-    print("UPBIT SPOT QUANT SCANNER V16.3 (COOLDOWN ADDED)")
+    print("UPBIT SPOT QUANT SCANNER V16.4 (LOOSE TRAILING)")
     print("시간:", now())
     print("=" * 55)
 
@@ -412,7 +413,6 @@ def main():
         for market, ticker in candidates:
             coin = market.replace("KRW-", "")
             
-            # 💡 이미 보유 중이거나, 블랙리스트이거나, 3시간 쿨다운 중이면 스킵
             if coin in st["positions"] or coin in EXCLUDED:
                 continue
             
