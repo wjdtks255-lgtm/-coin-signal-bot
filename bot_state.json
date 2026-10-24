@@ -40,16 +40,6 @@
       "highest_price": 140400.0,
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
-    },
-    "NCT": {
-      "entry": 16.2,
-      "sl": 15.389999999999999,
-      "tp1": 17.172,
-      "tp2": 17.982,
-      "tp3": null,
-      "highest_price": 16.6,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 08:50:45 KST"
     }
   },
   "stats": {
@@ -284,6 +274,14 @@
       "exit": 43.6,
       "pnl_pct": -5.011,
       "time": "2026-10-24 08:55:36 KST"
+    },
+    {
+      "symbol": "NCT",
+      "outcome": "initial_sl",
+      "entry": 16.2,
+      "exit": 15.1,
+      "pnl_pct": -6.79,
+      "time": "2026-10-24 09:00:52 KST"
     }
   ]
 }
