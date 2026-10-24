@@ -70,6 +70,16 @@
       "highest_price": 87.5,
       "max_tp_hit": 0,
       "time": "2026-10-24 10:45:48 KST"
+    },
+    "TREE": {
+      "entry": 61.0,
+      "sl": 57.95,
+      "tp1": 64.66,
+      "tp2": 67.71000000000001,
+      "tp3": null,
+      "highest_price": 61.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 11:10:51 KST"
     }
   },
   "stats": {
