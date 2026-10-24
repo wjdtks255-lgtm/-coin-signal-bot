@@ -41,45 +41,25 @@
       "max_tp_hit": 0,
       "time": "2026-10-23 22:45:49 KST"
     },
-    "DOS": {
-      "entry": 366.0,
-      "sl": 347.7,
-      "tp1": 387.96,
-      "tp2": 406.26,
-      "tp3": 430.05,
-      "highest_price": 366.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 10:00:55 KST"
-    },
-    "ARK": {
-      "entry": 313.0,
-      "sl": 297.35,
-      "tp1": 331.78,
-      "tp2": 347.43,
-      "tp3": null,
-      "highest_price": 320.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 10:10:38 KST"
-    },
-    "IN": {
-      "entry": 50.9,
-      "sl": 48.355,
-      "tp1": 53.954,
-      "tp2": 56.498999999999995,
-      "tp3": 59.8075,
-      "highest_price": 52.3,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 10:15:55 KST"
-    },
     "IRYS": {
-      "entry": 155.0,
-      "sl": 147.25,
-      "tp1": 164.3,
-      "tp2": 172.05,
-      "tp3": 182.125,
-      "highest_price": 155.0,
+      "entry": 145.0,
+      "sl": 137.75,
+      "tp1": 153.7,
+      "tp2": 160.95,
+      "tp3": 170.375,
+      "highest_price": 145.0,
       "max_tp_hit": 0,
-      "time": "2026-10-24 10:30:44 KST"
+      "time": "2026-10-24 10:40:42 KST"
+    },
+    "DOS": {
+      "entry": 345.0,
+      "sl": 327.75,
+      "tp1": 365.7,
+      "tp2": 382.95,
+      "tp3": null,
+      "highest_price": 345.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 10:40:45 KST"
     }
   },
   "stats": {
@@ -402,6 +382,38 @@
       "exit": 43.5,
       "pnl_pct": -7.447,
       "time": "2026-10-24 10:30:41 KST"
+    },
+    {
+      "symbol": "DOS",
+      "outcome": "initial_sl",
+      "entry": 366.0,
+      "exit": 345.0,
+      "pnl_pct": -5.738,
+      "time": "2026-10-24 10:40:39 KST"
+    },
+    {
+      "symbol": "ARK",
+      "outcome": "initial_sl",
+      "entry": 313.0,
+      "exit": 297.0,
+      "pnl_pct": -5.112,
+      "time": "2026-10-24 10:40:39 KST"
+    },
+    {
+      "symbol": "IN",
+      "outcome": "tp3",
+      "entry": 50.9,
+      "exit": 60.7,
+      "pnl_pct": 19.253,
+      "time": "2026-10-24 10:40:40 KST"
+    },
+    {
+      "symbol": "IRYS",
+      "outcome": "initial_sl",
+      "entry": 155.0,
+      "exit": 145.0,
+      "pnl_pct": -6.452,
+      "time": "2026-10-24 10:40:40 KST"
     }
   ]
 }
