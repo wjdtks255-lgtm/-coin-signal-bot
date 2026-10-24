@@ -47,39 +47,39 @@
       "tp1": 124.02,
       "tp2": 129.87,
       "tp3": null,
-      "highest_price": 119.0,
+      "highest_price": 121.0,
       "max_tp_hit": 0,
       "time": "2026-10-24 09:25:36 KST"
     },
     "FOLD": {
       "entry": 79.1,
-      "sl": 75.145,
+      "sl": 79.1,
       "tp1": 83.84599999999999,
       "tp2": 87.80099999999999,
       "tp3": null,
-      "highest_price": 82.4,
-      "max_tp_hit": 0,
+      "highest_price": 84.7,
+      "max_tp_hit": 1,
       "time": "2026-10-24 09:25:38 KST"
-    },
-    "UP2": {
-      "entry": 136.0,
-      "sl": 129.2,
-      "tp1": 144.16,
-      "tp2": 150.96,
-      "tp3": null,
-      "highest_price": 138.0,
-      "max_tp_hit": 0,
-      "time": "2026-10-24 09:30:46 KST"
     },
     "BFC": {
       "entry": 45.7,
-      "sl": 43.415000000000006,
+      "sl": 45.7,
       "tp1": 48.442,
       "tp2": 50.727000000000004,
       "tp3": 53.697500000000005,
-      "highest_price": 45.7,
-      "max_tp_hit": 0,
+      "highest_price": 49.1,
+      "max_tp_hit": 1,
       "time": "2026-10-24 09:40:41 KST"
+    },
+    "UP2": {
+      "entry": 152.0,
+      "sl": 144.4,
+      "tp1": 161.12,
+      "tp2": 168.72,
+      "tp3": null,
+      "highest_price": 152.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 09:55:33 KST"
     }
   },
   "stats": {
@@ -354,6 +354,14 @@
       "exit": 45.9,
       "pnl_pct": 11.679,
       "time": "2026-10-24 09:40:38 KST"
+    },
+    {
+      "symbol": "UP2",
+      "outcome": "tp2_end",
+      "entry": 136.0,
+      "exit": 151.0,
+      "pnl_pct": 11.029,
+      "time": "2026-10-24 09:55:29 KST"
     }
   ]
 }
