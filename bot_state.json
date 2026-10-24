@@ -60,6 +60,16 @@
       "highest_price": 365.0,
       "max_tp_hit": 0,
       "time": "2026-10-24 15:45:40 KST"
+    },
+    "DATA": {
+      "entry": 207.0,
+      "sl": 196.65,
+      "tp1": 219.42000000000002,
+      "tp2": 229.77,
+      "tp3": null,
+      "highest_price": 207.0,
+      "max_tp_hit": 0,
+      "time": "2026-10-24 16:15:44 KST"
     }
   },
   "stats": {
